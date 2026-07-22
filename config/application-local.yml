@@ -1,0 +1,21 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: "jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true"
+    username: personnel_archive_local
+    password: "8b1b9f9108900ea9a4f59b55f928ec5c"
+
+server:
+  port: 8080
+
+personnel-archive:
+  security:
+    token-pepper: "43d48f30362f06d9d5b1156ff898173f513ec92c046b715d29d28e823e59fbe1"
+    identity-hmac-key: "e69da0e5e6b37c81fbc2aaa5c751cffdd48ea9f3e26547f4181b92040c9bddda"
+    identity-encryption-key: "J/9XyOA/1bjVYmyTT7HPxVR5sduTr7QFbnAtK4TAZCY="
+  bootstrap-admin:
+    username: admin
+    password: "be97c6aa024682fdfb04dda0"
+    display-name: 本地测试管理员
