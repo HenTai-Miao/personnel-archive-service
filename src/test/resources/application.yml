@@ -1,0 +1,25 @@
+spring:
+  flyway:
+    enabled: false
+  datasource:
+    url: jdbc:mysql://127.0.0.1:1/not-used
+    username: not-used
+    password: not-used
+personnel-archive:
+  tenant-id: 1
+  bootstrap-admin:
+    username: ""
+    password: ""
+    display-name: 初始管理员
+  security:
+    access-token-ttl: PT15M
+    refresh-token-ttl: P7D
+    access-max-items: 1000
+    token-pepper: test-token-pepper-with-at-least-32-bytes
+    identity-hmac-key: test-identity-hmac-key-at-least-32-bytes
+    identity-encryption-key: dGVzdC1hZXMtMjU2LWtleS0zMi1ieXRlcyEhISEhISE=
+  excel:
+    max-file-bytes: 12582912
+    max-photo-bytes: 5242880
+    pending-max-items: 100
+    template: classpath:/excel/personnel-archive-template-v1.xlsx

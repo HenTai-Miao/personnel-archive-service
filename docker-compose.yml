@@ -1,0 +1,24 @@
+services:
+  mysql:
+    image: mysql:8.4.3
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: personnel_archive
+      MYSQL_USER: personnel_archive
+      MYSQL_PASSWORD: ${PA_MYSQL_PASSWORD:?set PA_MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${PA_MYSQL_ROOT_PASSWORD:?set PA_MYSQL_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - personnel_archive_mysql:/var/lib/mysql
+    networks: [database]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${PA_MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+networks:
+  database:
+    internal: true
+volumes:
+  personnel_archive_mysql:

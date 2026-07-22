@@ -1,0 +1,472 @@
+openapi: 3.1.0
+info:
+  title: 人员档案数据服务 API
+  version: 1.3.0
+  description: 业务日期使用 yyyy-MM-dd，时间戳使用 ISO-8601；V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /auth/login:
+    post:
+      security: []
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AuthTokens' }
+        '401': { $ref: '#/components/responses/Error' }
+        '423': { $ref: '#/components/responses/Error' }
+  /auth/refresh:
+    post:
+      security: []
+      operationId: refresh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AuthTokens' }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      operationId: logout
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '204': { description: 已撤销当前访问令牌和刷新会话 }
+        '401': { $ref: '#/components/responses/Error' }
+  /imports:
+    post:
+      operationId: importWorkbooks
+      description: 每个文件独立事务；原工作簿不保留。业务单元格允许为空，非空身份证仍校验格式。只有非空姓名与非空身份证同时匹配同一有效档案时才返回待覆盖/跳过；手动选择和自动文件夹来源使用相同规则。重复项仅在有界 TTL 内存中保留已解析结构。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string, format: binary }
+      responses:
+        '200':
+          description: 批次逐文件结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportBatch' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /imports/{itemId}/decision:
+    post:
+      operationId: decideImport
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [SKIP, OVERWRITE] }
+      responses:
+        '200':
+          description: 决策结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportItem' }
+        '409': { $ref: '#/components/responses/Error' }
+  /family-members/search:
+    get:
+      operationId: searchFamilyMembers
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 活动档案家庭成员包含式查询结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FamilySearchPage' }
+  /persons:
+    get:
+      operationId: listPersons
+      description: 仅返回当前活动档案；单位/部门条件同时匹配单位名称和部门名称。
+      parameters:
+        - name: name
+          in: query
+          schema: { type: string, maxLength: 128, default: '' }
+        - name: employeeNo
+          in: query
+          schema: { type: string, maxLength: 64, default: '' }
+        - name: department
+          in: query
+          schema: { type: string, maxLength: 255, default: '' }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 活动人员档案分页列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonListPage' }
+        '400': { $ref: '#/components/responses/Error' }
+  /persons/{personId}:
+    get:
+      operationId: getPerson
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      responses:
+        '200':
+          description: 活动档案详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+  /persons/{personId}/photo:
+    get:
+      operationId: getPersonPhoto
+      description: 返回活动档案中保存的原始 JPEG/PNG 照片；响应禁止客户端缓存。
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      responses:
+        '200':
+          description: 档案原始照片字节
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/Error' }
+  /persons/{personId}/archive:
+    get:
+      operationId: exportPersonArchive
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      responses:
+        '200':
+          description: 数据库重建的临时 XLSX 流
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/Error' }
+  /persons/exports:
+    post:
+      operationId: exportPersonArchives
+      description: 逐份从有效数据库快照重建 XLSX，并以不覆盖同名条目的 ZIP 一次性返回；任一档案无效则整批失败。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchArchiveExportRequest' }
+      responses:
+        '200':
+          description: 包含 1 至 100 份重建 XLSX 的 ZIP 档案包
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: opaque }
+  parameters:
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    PersonId:
+      name: personId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+  responses:
+    AuthTokens:
+      description: 访问令牌、刷新令牌和当前用户
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AuthTokenResponse' }
+    Error:
+      description: 稳定机器码与安全中文信息
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+  schemas:
+    Id:
+      type: string
+      pattern: '^[1-9][0-9]*$'
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 100 }
+        password: { type: string, minLength: 1, maxLength: 256, format: password }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 1 }
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, username, displayName, roles]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        username: { type: string }
+        displayName: { type: string }
+        roles:
+          type: array
+          items: { type: string, enum: [ADMIN, ARCHIVE_EDITOR, VIEWER] }
+    AuthTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, refreshToken, expiresIn, user]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, minimum: 1 }
+        user: { $ref: '#/components/schemas/User' }
+    DuplicateInfo:
+      type: object
+      description: 仅在 incoming 姓名和身份证均非空且同时命中同一有效档案时返回。
+      required: [personName, identityCardLastFour, existingEmployeeNo, incomingEmployeeNo, existingUpdatedAt]
+      properties:
+        personName: { type: string }
+        identityCardLastFour: { type: string, minLength: 4, maxLength: 4 }
+        existingEmployeeNo: { type: string }
+        incomingEmployeeNo: { type: string }
+        existingUpdatedAt: { type: string, format: date-time }
+    ImportItem:
+      type: object
+      required: [itemId, fileName, status, code, message]
+      properties:
+        itemId: { $ref: '#/components/schemas/Id' }
+        fileName: { type: string }
+        status: { type: string, enum: [PENDING_DECISION, IMPORTED, OVERWRITTEN, SKIPPED, FAILED] }
+        code: { type: string }
+        message: { type: string }
+        duplicate: { $ref: '#/components/schemas/DuplicateInfo' }
+    ImportBatch:
+      type: object
+      required: [batchId, items]
+      properties:
+        batchId: { $ref: '#/components/schemas/Id' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ImportItem' }
+    FamilySearchItem:
+      type: object
+      required: [personId, personName, organization, department, position, titleOrSkill, matchedMemberName, relationship]
+      properties:
+        personId: { $ref: '#/components/schemas/Id' }
+        personName: { type: string }
+        organization: { type: string }
+        department: { type: string }
+        position: { type: string }
+        titleOrSkill: { type: string }
+        matchedMemberName: { type: string }
+        relationship: { type: string }
+    FamilySearchPage:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content: { type: array, items: { $ref: '#/components/schemas/FamilySearchItem' } }
+        page: { type: integer, minimum: 0 }
+        size: { type: integer, minimum: 1 }
+        totalElements: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
+    PersonListItem:
+      type: object
+      additionalProperties: false
+      required: [id, employeeNo, name, organization, department, position, titleOrSkill, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        employeeNo: { type: string }
+        name: { type: string }
+        organization: { type: string }
+        department: { type: string }
+        position: { type: string }
+        titleOrSkill: { type: string }
+        updatedAt: { type: string, format: date-time }
+    PersonListPage:
+      type: object
+      additionalProperties: false
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content: { type: array, items: { $ref: '#/components/schemas/PersonListItem' } }
+        page: { type: integer, minimum: 0 }
+        size: { type: integer, minimum: 1 }
+        totalElements: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
+    BatchArchiveExportRequest:
+      type: object
+      additionalProperties: false
+      required: [personIds]
+      properties:
+        personIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/Id' }
+    PersonalInfo:
+      type: object
+      additionalProperties: false
+      required: [gender, birthDate, nation, nativePlace, birthPlace, politicalStatus, politicalJoinDate, maritalStatus, healthStatus, mailingAddress, postalCode, phoneNumber]
+      properties:
+        gender: { type: string }
+        birthDate: { type: string }
+        nation: { type: string }
+        nativePlace: { type: string }
+        birthPlace: { type: string }
+        politicalStatus: { type: string }
+        politicalJoinDate: { type: string }
+        maritalStatus: { type: string }
+        healthStatus: { type: string }
+        mailingAddress: { type: string }
+        postalCode: { type: string }
+        phoneNumber: { type: string }
+    EmploymentDetails:
+      type: object
+      additionalProperties: false
+      required: [organization, department, workStartDate, dispatchedToBiddingCompanyDate, position, titleOrSkill, titleOrSkillAcquiredDate]
+      properties:
+        organization: { type: string }
+        department: { type: string }
+        workStartDate: { type: string }
+        dispatchedToBiddingCompanyDate: { type: string }
+        position: { type: string }
+        titleOrSkill: { type: string }
+        titleOrSkillAcquiredDate: { type: string }
+    EducationSummary:
+      type: object
+      additionalProperties: false
+      required: [institutionName, departmentAndMajor, educationLevel, degreeName]
+      properties:
+        institutionName: { type: string }
+        departmentAndMajor: { type: string }
+        educationLevel: { type: string }
+        degreeName: { type: string }
+    EducationDetails:
+      type: object
+      additionalProperties: false
+      required: [fullTime, inService]
+      properties:
+        fullTime: { $ref: '#/components/schemas/EducationSummary' }
+        inService: { $ref: '#/components/schemas/EducationSummary' }
+    OrderedText:
+      type: object
+      additionalProperties: false
+      required: [sortOrder, leftText, rightText]
+      properties:
+        sortOrder: { type: integer, minimum: 1 }
+        leftText: { type: string }
+        rightText: { type: string }
+    FamilyMember:
+      type: object
+      additionalProperties: false
+      required: [name, relationship, birthDate, age, politicalStatus, organizationAndPosition]
+      properties:
+        name: { type: string }
+        relationship: { type: string }
+        birthDate: { type: string }
+        age:
+          oneOf:
+            - { type: integer, minimum: 0 }
+            - { type: 'null' }
+        politicalStatus: { type: string }
+        organizationAndPosition: { type: string }
+    DeclarationInfo:
+      type: object
+      additionalProperties: false
+      required: [signer, date]
+      properties:
+        signer: { type: string }
+        date: { type: string }
+    PhotoMetadata:
+      type: object
+      additionalProperties: false
+      required: [mimeType, originalFilename, byteSize, widthPixels, heightPixels]
+      properties:
+        mimeType: { type: string, enum: [image/png, image/jpeg] }
+        originalFilename: { type: string }
+        byteSize: { type: integer, format: int64, minimum: 1 }
+        widthPixels: { type: integer, minimum: 1 }
+        heightPixels: { type: integer, minimum: 1 }
+    ArchiveMetadata:
+      type: object
+      additionalProperties: false
+      required: [templateVersion, snapshotVersion, updatedAt]
+      properties:
+        templateVersion: { type: string }
+        snapshotVersion: { type: integer, format: int64, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
+    PersonDetail:
+      type: object
+      additionalProperties: false
+      required: [id, employeeNo, name, identityCardMasked, personal, employment, education, mainEducation, workExperiences, rewardsPunishments, familyMembers, declaration, photo, archive]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        employeeNo: { type: string }
+        name: { type: string }
+        identityCardMasked: { type: string }
+        personal: { $ref: '#/components/schemas/PersonalInfo' }
+        employment: { $ref: '#/components/schemas/EmploymentDetails' }
+        education: { $ref: '#/components/schemas/EducationDetails' }
+        mainEducation: { type: array, items: { $ref: '#/components/schemas/OrderedText' } }
+        workExperiences: { type: array, items: { $ref: '#/components/schemas/OrderedText' } }
+        rewardsPunishments: { type: array, items: { $ref: '#/components/schemas/OrderedText' } }
+        familyMembers: { type: array, items: { $ref: '#/components/schemas/FamilyMember' } }
+        declaration: { $ref: '#/components/schemas/DeclarationInfo' }
+        photo:
+          oneOf:
+            - { $ref: '#/components/schemas/PhotoMetadata' }
+            - { type: 'null' }
+        archive: { $ref: '#/components/schemas/ArchiveMetadata' }
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [code, message, timestamp]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        timestamp: { type: string, format: date-time }
+        details: { type: object, additionalProperties: true }

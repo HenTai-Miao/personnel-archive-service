@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: personnel-archive-service
+  datasource:
+    url: ${PA_DB_URL:jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${PA_DB_USERNAME:personnel_archive}
+    password: ${PA_DB_PASSWORD:}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: 12MB
+      max-request-size: 64MB
+  jackson:
+    time-zone: UTC
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-fetch-size: 100
+server:
+  port: ${PA_SERVER_PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+personnel-archive:
+  tenant-id: 1
+  security:
+    access-token-ttl: PT15M
+    refresh-token-ttl: P7D
+    access-max-items: 10000
+    token-pepper: ${PA_TOKEN_PEPPER:}
+    identity-hmac-key: ${PA_IDENTITY_HMAC_KEY:}
+    identity-encryption-key: ${PA_IDENTITY_ENCRYPTION_KEY:}
+  excel:
+    max-file-bytes: 12582912
+    max-photo-bytes: 5242880
+    pending-max-items: 500
+    template: classpath:/excel/personnel-archive-template-v1.xlsx
+  bootstrap-admin:
+    username: ${PA_BOOTSTRAP_ADMIN_USERNAME:}
+    password: ${PA_BOOTSTRAP_ADMIN_PASSWORD:}
+    display-name: ${PA_BOOTSTRAP_ADMIN_DISPLAY_NAME:初始管理员}
+logging:
+  level:
+    root: INFO
+    com.company.personnelarchive: INFO
