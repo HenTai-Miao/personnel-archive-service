@@ -10,6 +10,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,7 +35,10 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.zip.ZipInputStream;
 
@@ -43,10 +50,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
+@Import(PersonnelArchiveFlowIntegrationTest.FixedClockConfiguration.class)
 @Testcontainers(disabledWithoutDocker = true)
 class PersonnelArchiveFlowIntegrationTest {
     private static final String USERNAME = "flow_admin";
     private static final String PASSWORD = "flow-test-password";
+    private static final String DECISION_USERNAME = "flow_editor";
+    private static final String DECISION_PASSWORD = "flow-editor-password";
     private static final String EMPLOYEE_NO = "FLOW-001";
     private static final String PERSON_NAME = "测试甲";
     private static final String IDENTITY_CARD = "990000200001010012";
@@ -56,6 +66,15 @@ class PersonnelArchiveFlowIntegrationTest {
         .withDatabaseName("personnel_archive")
         .withUsername("flow_user")
         .withPassword("flow_password");
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class FixedClockConfiguration {
+        @Bean
+        @Primary
+        Clock integrationTestClock() {
+            return Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneId.of("Asia/Shanghai"));
+        }
+    }
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -81,6 +100,13 @@ class PersonnelArchiveFlowIntegrationTest {
             long roleId = jdbc.queryForObject("SELECT id FROM sys_role WHERE tenant_id=1 AND role_code='ADMIN'", Long.class);
             jdbc.update("INSERT INTO sys_user_role (tenant_id,user_id,role_id) VALUES (1,?,?)", userId, roleId);
         }
+        if (jdbc.queryForObject("SELECT COUNT(*) FROM sys_user WHERE normalized_username=?", Integer.class, DECISION_USERNAME) == 0) {
+            jdbc.update("INSERT INTO sys_user (tenant_id,username,normalized_username,password_hash,display_name) VALUES (1,?,?,?,?)",
+                DECISION_USERNAME, DECISION_USERNAME, passwordEncoder.encode(DECISION_PASSWORD), "流程复核员");
+            long userId = jdbc.queryForObject("SELECT id FROM sys_user WHERE normalized_username=?", Long.class, DECISION_USERNAME);
+            long roleId = jdbc.queryForObject("SELECT id FROM sys_role WHERE tenant_id=1 AND role_code='ARCHIVE_EDITOR'", Long.class);
+            jdbc.update("INSERT INTO sys_user_role (tenant_id,user_id,role_id) VALUES (1,?,?)", userId, roleId);
+        }
     }
 
     @Test
@@ -88,6 +114,8 @@ class PersonnelArchiveFlowIntegrationTest {
         assertThat(context.getBeansOfType(UserDetailsService.class))
             .as("custom bearer authentication must not expose Spring's generated in-memory user")
             .isEmpty();
+        mvc.perform(get("/api/v1/imports/history"))
+            .andExpect(status().isUnauthorized());
         String accessToken = login();
         JsonNode imported = upload(accessToken, workbook("00000001", "初次导入"));
         assertThat(imported.at("/items/0/status").asText()).as(imported.toPrettyString()).isEqualTo("IMPORTED");
@@ -124,6 +152,21 @@ class PersonnelArchiveFlowIntegrationTest {
             .containsEntry("anchor_dy2", 45_678)
             .containsEntry("anchor_type", "MOVE_DONT_RESIZE");
 
+        var historyResult = mvc.perform(get("/api/v1/imports/history")
+                .param("page", "0").param("size", "20")
+                .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        JsonNode history = objectMapper.readTree(historyResult.getContentAsByteArray());
+        assertThat(history.at("/content/0/itemId").isString()).isTrue();
+        assertThat(history.at("/content/0/batchId").isString()).isTrue();
+        assertThat(history.at("/content/0/operatorName").asText()).isEqualTo("流程管理员");
+        assertThat(history.at("/content/0/fileName").asText()).isEqualTo("fixture.xlsx");
+        assertThat(history.at("/content/0/status").asText()).isEqualTo("IMPORTED");
+        assertThat(history.at("/content/0/message").asText()).isEqualTo("导入成功");
+        assertThat(history.at("/page").asInt()).isZero();
+        assertThat(history.at("/size").asInt()).isEqualTo(20);
+        assertThat(history.at("/totalElements").asLong()).isGreaterThanOrEqualTo(1);
+
         JsonNode duplicate = upload(accessToken, workbook("00000002", "覆盖版本"));
         assertThat(duplicate.at("/items/0/status").asText()).isEqualTo("PENDING_DECISION");
         assertThat(duplicate.at("/items/0/duplicate/identityCardLastFour").asText()).isEqualTo("0012");
@@ -131,8 +174,19 @@ class PersonnelArchiveFlowIntegrationTest {
             .as("a successful duplicate precheck is still an audited import operation")
             .isEqualTo(2);
         String overwriteItemId = duplicate.at("/items/0/itemId").asText();
-        JsonNode overwritten = decide(accessToken, overwriteItemId, "OVERWRITE");
+        String decisionAccessToken = login(DECISION_USERNAME, DECISION_PASSWORD);
+        JsonNode overwritten = decide(decisionAccessToken, overwriteItemId, "OVERWRITE");
         assertThat(overwritten.get("status").asText()).isEqualTo("OVERWRITTEN");
+        var decidedHistoryResult = mvc.perform(get("/api/v1/imports/history")
+                .param("page", "0").param("size", "20")
+                .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        JsonNode decidedHistory = objectMapper.readTree(decidedHistoryResult.getContentAsByteArray());
+        JsonNode decidedHistoryItem = java.util.stream.StreamSupport.stream(
+                decidedHistory.at("/content").spliterator(), false)
+            .filter(item -> overwriteItemId.equals(item.get("itemId").asText()))
+            .findFirst().orElseThrow();
+        assertThat(decidedHistoryItem.get("operatorName").asText()).isEqualTo("流程复核员");
         long secondPersonId = activePersonId();
         assertThat(secondPersonId).isNotEqualTo(firstPersonId);
         assertThat(jdbc.queryForObject("SELECT replaced_by_person_id FROM pa_person WHERE id=?", Long.class, firstPersonId))
@@ -191,6 +245,25 @@ class PersonnelArchiveFlowIntegrationTest {
         assertThat(detail.at("/familyMembers/0/politicalStatus").asText()).isEqualTo("测试面貌");
         assertThat(detail.at("/declaration/date").asText()).isEqualTo("2026-07-22");
         assertThat(detail.at("/photo/mimeType").asText()).isEqualTo("image/png");
+        assertThat(detail.at("/identityCardMasked").asText()).isEqualTo("9900***********012");
+        assertThat(detail.at("/personal/phoneNumberMasked").asText()).isEqualTo("0000*002");
+        assertThat(detail.at("/personal/phoneNumber").isMissingNode()).isTrue();
+        var identityResult = mvc.perform(get("/api/v1/persons/{id}/sensitive-value", secondPersonId)
+                .param("field", "IDENTITY_CARD")
+                .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(identityResult.getHeader(HttpHeaders.CACHE_CONTROL)).isEqualTo("no-store");
+        assertThat(objectMapper.readTree(identityResult.getContentAsByteArray()).at("/value").asText())
+            .isEqualTo(IDENTITY_CARD);
+        var phoneResult = mvc.perform(get("/api/v1/persons/{id}/sensitive-value", secondPersonId)
+                .param("field", "PHONE_NUMBER")
+                .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(phoneResult.getHeader(HttpHeaders.CACHE_CONTROL)).isEqualTo("no-store");
+        assertThat(objectMapper.readTree(phoneResult.getContentAsByteArray()).at("/value").asText())
+            .isEqualTo("00000002");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_operation_log WHERE resource_type IN ('PERSON_SENSITIVE_IDENTITY_CARD','PERSON_SENSITIVE_PHONE_NUMBER')", Integer.class))
+            .isEqualTo(2);
         var photoResult = mvc.perform(get("/api/v1/persons/{id}/photo", secondPersonId)
                 .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
             .andExpect(status().isOk()).andReturn().getResponse();
@@ -250,8 +323,12 @@ class PersonnelArchiveFlowIntegrationTest {
     }
 
     private String login() throws Exception {
+        return login(USERNAME, PASSWORD);
+    }
+
+    private String login(String username, String password) throws Exception {
         var result = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsBytes(java.util.Map.of("username", USERNAME, "password", PASSWORD))))
+                .content(objectMapper.writeValueAsBytes(java.util.Map.of("username", username, "password", password))))
             .andExpect(status().isOk()).andReturn();
         return objectMapper.readTree(result.getResponse().getContentAsByteArray()).get("accessToken").asText();
     }

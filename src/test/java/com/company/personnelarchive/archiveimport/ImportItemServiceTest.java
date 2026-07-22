@@ -22,6 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -55,6 +57,50 @@ class ImportItemServiceTest {
             List.of(), List.of(), List.of(), List.of(), null, "测试甲", LocalDate.of(2026, 7, 22));
         prepared = new SnapshotWriter.PreparedArchive(document, "T-001", "测试甲", "测试甲",
             "990000200001010012", new byte[]{1, 2, 3});
+    }
+
+    @Test
+    void stripsClientPathsBeforePersistingAndReturningTheFilename() {
+        // Given
+        SnapshotWriter.PreparedArchive blank = new SnapshotWriter.PreparedArchive(
+            document, "", "", "", null, null);
+        when(reader.read(any(), anyLong(), any())).thenReturn(document);
+        when(writer.prepare(document)).thenReturn(blank);
+        when(writer.insert(blank, 9, 1, null)).thenReturn(21L);
+        doAnswer(invocation -> {
+            ((ImportMapper.ItemInsert) invocation.getArgument(0)).id = 12L;
+            return 1;
+        }).when(imports).insertItem(any());
+
+        // When
+        ImportDtos.ItemResult result = service.precheck(
+            5, 1, "C:\\Users\\tester\\档案甲.xlsx", new byte[]{1, 2}, 9);
+
+        // Then
+        assertThat(result.fileName()).isEqualTo("档案甲.xlsx");
+        verify(reader).read(any(), anyLong(), eq("档案甲.xlsx"));
+        var inserted = org.mockito.ArgumentCaptor.forClass(ImportMapper.ItemInsert.class);
+        verify(imports).insertItem(inserted.capture());
+        assertThat(inserted.getValue().filename).isEqualTo("档案甲.xlsx");
+    }
+
+    @Test
+    void replacesABlankFilenameBeforePersistingAndReturningTheFailure() {
+        // Given
+        doAnswer(invocation -> {
+            ((ImportMapper.ItemInsert) invocation.getArgument(0)).id = 15L;
+            return 1;
+        }).when(imports).insertItem(any());
+
+        // When
+        ImportDtos.ItemResult result = service.recordFailure(
+            5, 1, "  ", new byte[]{1, 2}, ErrorCode.TEMPLATE_INVALID, "模板错误", 9);
+
+        // Then
+        assertThat(result.fileName()).isEqualTo("unnamed.xlsx");
+        var inserted = org.mockito.ArgumentCaptor.forClass(ImportMapper.ItemInsert.class);
+        verify(imports).insertItem(inserted.capture());
+        assertThat(inserted.getValue().filename).isEqualTo("unnamed.xlsx");
     }
 
     @Test

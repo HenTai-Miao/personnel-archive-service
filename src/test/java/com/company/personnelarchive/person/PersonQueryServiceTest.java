@@ -29,7 +29,10 @@ class PersonQueryServiceTest {
         // Given
         PersonReadMapper mapper = mock(PersonReadMapper.class);
         AuditService audit = mock(AuditService.class);
-        when(mapper.findActive(1, 7)).thenReturn(personRow());
+        IdentityProtection identityProtection = mock(IdentityProtection.class);
+        PersonReadMapper.PersonRow personRow = personRow();
+        when(mapper.findActive(1, 7)).thenReturn(personRow);
+        when(identityProtection.decrypt(personRow.idCardCiphertext())).thenReturn("123456789012345678");
         when(mapper.findEmployment(1, 7)).thenReturn(new PersonReadMapper.EmploymentRow(
             "测试单位", "测试部门", LocalDate.of(2020, 1, 1), LocalDate.of(2021, 1, 1),
             "测试职务", "测试技能", LocalDate.of(2022, 1, 1)));
@@ -46,7 +49,7 @@ class PersonQueryServiceTest {
             11, "测试称谓", "测试乙", LocalDate.of(2000, 7, 23), "测试面貌", "测试单位及职务", "", 1)));
         when(mapper.findPhotoMetadata(1, 7)).thenReturn(new PersonReadMapper.PhotoMetadataRow(
             "image/png", "fixture-photo.png", 128, 3, 4));
-        var service = new PersonQueryService(mapper, properties(), CLOCK, audit);
+        var service = new PersonQueryService(mapper, properties(), CLOCK, audit, identityProtection);
 
         // When
         PersonDtos.Detail detail = service.detail(7, 9);
@@ -64,6 +67,8 @@ class PersonQueryServiceTest {
         assertThat(detail.declaration().signer()).isEqualTo("测试甲");
         assertThat(detail.photo().mimeType()).isEqualTo("image/png");
         assertThat(detail.archive().snapshotVersion()).isEqualTo(2);
+        assertThat(detail.identityCardMasked()).isEqualTo("1234***********678");
+        assertThat(detail.personal().phoneNumberMasked()).isEqualTo("1380****000");
         verify(audit).record(9L, "VIEW", "PERSON", 7L, "SUCCESS", true);
     }
 
@@ -72,6 +77,7 @@ class PersonQueryServiceTest {
         // Given
         PersonReadMapper mapper = mock(PersonReadMapper.class);
         AuditService audit = mock(AuditService.class);
+        IdentityProtection identityProtection = mock(IdentityProtection.class);
         when(mapper.findActive(1, 8)).thenReturn(new PersonReadMapper.PersonRow(
             8, "", "", null, null,
             null, null, null, null, null, null, null, null, null, null, null, null, null, null,
@@ -80,7 +86,7 @@ class PersonQueryServiceTest {
         when(mapper.findWork(1, 8)).thenReturn(List.of());
         when(mapper.findRewards(1, 8)).thenReturn(List.of());
         when(mapper.findFamily(1, 8)).thenReturn(List.of());
-        var service = new PersonQueryService(mapper, properties(), CLOCK, audit);
+        var service = new PersonQueryService(mapper, properties(), CLOCK, audit, identityProtection);
 
         // When
         PersonDtos.Detail detail = service.detail(8, 9);
@@ -89,7 +95,48 @@ class PersonQueryServiceTest {
         assertThat(detail.employeeNo()).isEmpty();
         assertThat(detail.name()).isEmpty();
         assertThat(detail.identityCardMasked()).isEmpty();
+        assertThat(detail.personal().phoneNumberMasked()).isEmpty();
+        verifyNoInteractions(identityProtection);
         verify(audit).record(9L, "VIEW", "PERSON", 8L, "SUCCESS", true);
+    }
+
+    @Test
+    void revealsFullIdentityOnlyThroughExplicitSensitiveRead() {
+        // Given
+        PersonReadMapper mapper = mock(PersonReadMapper.class);
+        AuditService audit = mock(AuditService.class);
+        IdentityProtection identityProtection = mock(IdentityProtection.class);
+        PersonReadMapper.PersonRow person = personRow();
+        when(mapper.findActive(1, 7)).thenReturn(person);
+        when(identityProtection.decrypt(person.idCardCiphertext())).thenReturn("123456789012345678");
+        var service = new PersonQueryService(mapper, properties(), CLOCK, audit, identityProtection);
+
+        // When
+        PersonDtos.SensitiveValue result = service.sensitiveValue(
+            7, PersonDtos.SensitiveField.IDENTITY_CARD, 9);
+
+        // Then
+        assertThat(result.value()).isEqualTo("123456789012345678");
+        verify(audit).recordSensitiveView(9L, 7L, "IDENTITY_CARD");
+    }
+
+    @Test
+    void revealsFullPhoneOnlyThroughExplicitSensitiveRead() {
+        // Given
+        PersonReadMapper mapper = mock(PersonReadMapper.class);
+        AuditService audit = mock(AuditService.class);
+        IdentityProtection identityProtection = mock(IdentityProtection.class);
+        when(mapper.findActive(1, 7)).thenReturn(personRow());
+        var service = new PersonQueryService(mapper, properties(), CLOCK, audit, identityProtection);
+
+        // When
+        PersonDtos.SensitiveValue result = service.sensitiveValue(
+            7, PersonDtos.SensitiveField.PHONE_NUMBER, 9);
+
+        // Then
+        assertThat(result.value()).isEqualTo("13800138000");
+        verifyNoInteractions(identityProtection);
+        verify(audit).recordSensitiveView(9L, 7L, "PHONE_NUMBER");
     }
 
     @Test
@@ -101,7 +148,8 @@ class PersonQueryServiceTest {
         when(mapper.findPhoto(1, 7)).thenReturn(new PersonReadMapper.PhotoRow(
             new byte[]{1, 2, 3}, "image/png", "fixture-photo.png", 3, 3, 4, new byte[]{9},
             8, 4, 0, 0, 9, 7, 0, 0, "MOVE_DONT_RESIZE"));
-        var service = new PersonQueryService(mapper, properties(), CLOCK, audit);
+        var service = new PersonQueryService(
+            mapper, properties(), CLOCK, audit, mock(IdentityProtection.class));
 
         // When
         PersonQueryService.PhotoContent photo = service.photo(7, 9);
@@ -119,7 +167,8 @@ class PersonQueryServiceTest {
         PersonReadMapper mapper = mock(PersonReadMapper.class);
         AuditService audit = mock(AuditService.class);
         when(mapper.findActive(1, 7)).thenReturn(personRow());
-        var service = new PersonQueryService(mapper, properties(), CLOCK, audit);
+        var service = new PersonQueryService(
+            mapper, properties(), CLOCK, audit, mock(IdentityProtection.class));
 
         // When / Then
         assertThatThrownBy(() -> service.photo(7, 9))
@@ -132,7 +181,7 @@ class PersonQueryServiceTest {
         return new PersonReadMapper.PersonRow(
             7, "E-001", "测试甲", new byte[]{1}, "0012", "女", LocalDate.of(2000, 1, 1), "汉族",
             "湖南长沙", "湖南长沙", "中共党员", LocalDate.of(2021, 7, 1), "已婚", "健康",
-            "测试地址", "410000", "00000002", "测试甲", LocalDate.of(2026, 7, 22), "V1", 2,
+            "测试地址", "410000", "13800138000", "测试甲", LocalDate.of(2026, 7, 22), "V1", 2,
             Instant.parse("2026-07-22T03:00:00Z"));
     }
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 人员档案数据服务 API
-  version: 1.3.0
+  version: 1.5.0
   description: 业务日期使用 yyyy-MM-dd，时间戳使用 ISO-8601；V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
 servers:
   - url: /api/v1
@@ -67,6 +67,26 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ImportBatch' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /imports/history:
+    get:
+      operationId: listImportHistory
+      description: 分页返回数据库永久保存的逐文件导入处理记录；不返回源工作簿、文件哈希或本机路径。
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 按处理时间倒序排列的导入记录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportHistoryPage' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -146,10 +166,31 @@ paths:
         - $ref: '#/components/parameters/PersonId'
       responses:
         '200':
-          description: 活动档案详情
+          description: 活动档案详情；身份证和手机号只返回前四后三脱敏值。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PersonDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+  /persons/{personId}/sensitive-value:
+    get:
+      operationId: getPersonSensitiveValue
+      description: 按字段返回活动档案的完整身份证或手机号；每次读取均鉴权、记审计且禁止缓存。
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+        - name: field
+          in: query
+          required: true
+          schema: { type: string, enum: [IDENTITY_CARD, PHONE_NUMBER] }
+      responses:
+        '200':
+          description: 本次明确请求的单个完整敏感值
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SensitiveValue' }
+        '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
   /persons/{personId}/photo:
     get:
@@ -279,7 +320,7 @@ components:
       required: [itemId, fileName, status, code, message]
       properties:
         itemId: { $ref: '#/components/schemas/Id' }
-        fileName: { type: string }
+        fileName: { type: string, minLength: 1 }
         status: { type: string, enum: [PENDING_DECISION, IMPORTED, OVERWRITTEN, SKIPPED, FAILED] }
         code: { type: string }
         message: { type: string }
@@ -292,6 +333,34 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/ImportItem' }
+    ImportHistoryItem:
+      type: object
+      additionalProperties: false
+      required: [itemId, batchId, operatorName, fileName, status, code, message, processedAt]
+      properties:
+        itemId: { $ref: '#/components/schemas/Id' }
+        batchId: { $ref: '#/components/schemas/Id' }
+        operatorName:
+          type: string
+          description: 覆盖或跳过时为实际决定人，其他状态为批次创建人。
+        fileName:
+          type: string
+          minLength: 1
+          description: 仅含文件 basename，不含客户端目录路径。
+        status: { type: string, enum: [PENDING_DECISION, IMPORTED, OVERWRITTEN, SKIPPED, FAILED] }
+        code: { type: string }
+        message: { type: string }
+        processedAt: { type: string, format: date-time }
+    ImportHistoryPage:
+      type: object
+      additionalProperties: false
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content: { type: array, items: { $ref: '#/components/schemas/ImportHistoryItem' } }
+        page: { type: integer, minimum: 0 }
+        size: { type: integer, minimum: 1 }
+        totalElements: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
     FamilySearchItem:
       type: object
       required: [personId, personName, organization, department, position, titleOrSkill, matchedMemberName, relationship]
@@ -350,7 +419,7 @@ components:
     PersonalInfo:
       type: object
       additionalProperties: false
-      required: [gender, birthDate, nation, nativePlace, birthPlace, politicalStatus, politicalJoinDate, maritalStatus, healthStatus, mailingAddress, postalCode, phoneNumber]
+      required: [gender, birthDate, nation, nativePlace, birthPlace, politicalStatus, politicalJoinDate, maritalStatus, healthStatus, mailingAddress, postalCode, phoneNumberMasked]
       properties:
         gender: { type: string }
         birthDate: { type: string }
@@ -363,7 +432,15 @@ components:
         healthStatus: { type: string }
         mailingAddress: { type: string }
         postalCode: { type: string }
-        phoneNumber: { type: string }
+        phoneNumberMasked:
+          type: string
+          description: 非空时保留前四和后三字符，其余字符替换为星号。
+    SensitiveValue:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value: { type: string }
     EmploymentDetails:
       type: object
       additionalProperties: false
@@ -447,7 +524,9 @@ components:
         id: { $ref: '#/components/schemas/Id' }
         employeeNo: { type: string }
         name: { type: string }
-        identityCardMasked: { type: string }
+        identityCardMasked:
+          type: string
+          description: 非空时保留前四和后三字符，其余字符替换为星号。
         personal: { $ref: '#/components/schemas/PersonalInfo' }
         employment: { $ref: '#/components/schemas/EmploymentDetails' }
         education: { $ref: '#/components/schemas/EducationDetails' }

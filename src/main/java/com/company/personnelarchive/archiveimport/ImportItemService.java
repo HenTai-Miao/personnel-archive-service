@@ -46,8 +46,9 @@ public class ImportItemService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ImportDtos.ItemResult precheck(long batchId, int order, String filename, byte[] file, long operatorId) {
         // 每个文件使用新事务，使批量中的解析、约束或数据库失败互不影响。
+        String safeFilename = ImportFilename.safe(filename);
         byte[] fileHash = sha256(file);
-        ArchiveDocument document = excelReader.read(new ByteArrayInputStream(file), file.length, filename);
+        ArchiveDocument document = excelReader.read(new ByteArrayInputStream(file), file.length, safeFilename);
         SnapshotWriter.PreparedArchive prepared = writer.prepare(document);
         PersonMapper.ActivePerson identityMatch = prepared.identityHmac() == null ? null
             : personMapper.findActiveByIdentity(properties.tenantId(), prepared.identityHmac());
@@ -59,17 +60,17 @@ public class ImportItemService {
             }
             PersonMapper.ActivePerson employeeMatch = findEmployeeMatch(prepared.employeeNo());
             if (employeeMatch != null && employeeMatch.id() != identityMatch.id()) throw new BusinessException(ErrorCode.EMPLOYEE_NO_CONFLICT);
-            return pending(batchId, order, filename, file, fileHash, document, prepared.employeeNo(), identityMatch,
+            return pending(batchId, order, safeFilename, file, fileHash, document, prepared.employeeNo(), identityMatch,
                 operatorId);
         }
         PersonMapper.ActivePerson employeeMatch = findEmployeeMatch(prepared.employeeNo());
         if (employeeMatch != null) throw new BusinessException(ErrorCode.EMPLOYEE_NO_CONFLICT);
         long personId = writer.insert(prepared, operatorId, 1, null);
-        ImportMapper.ItemInsert item = base(batchId, order, filename, file, fileHash);
+        ImportMapper.ItemInsert item = base(batchId, order, safeFilename, file, fileHash);
         item.status = "IMPORTED"; item.resultCode = "IMPORTED"; item.message = "导入成功"; item.importedPersonId = personId;
         importMapper.insertItem(item);
         audit.recordImport(operatorId, "IMPORT", personId, batchId, item.id, "IMPORTED", true);
-        return new ImportDtos.ItemResult(item.id, filename, item.status, item.resultCode, item.message, null);
+        return new ImportDtos.ItemResult(item.id, item.filename, item.status, item.resultCode, item.message, null);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -79,7 +80,7 @@ public class ImportItemService {
         item.status = "FAILED"; item.resultCode = code.name(); item.message = safeMessage;
         importMapper.insertItem(item);
         audit.recordImport(operatorId, "IMPORT", null, batchId, item.id, code.name(), false);
-        return new ImportDtos.ItemResult(item.id, filename, item.status, item.resultCode, item.message, null);
+        return new ImportDtos.ItemResult(item.id, item.filename, item.status, item.resultCode, item.message, null);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -143,13 +144,13 @@ public class ImportItemService {
             ErrorCode.DUPLICATE_REQUIRES_DECISION.name(), true);
         var duplicate = new ImportDtos.DuplicateSummary(match.personName(), match.idCardLastFour(), match.employeeNo(),
             incomingEmployeeNo, match.updatedAt().toString());
-        return new ImportDtos.ItemResult(item.id, filename, item.status, item.resultCode, item.message, duplicate);
+        return new ImportDtos.ItemResult(item.id, item.filename, item.status, item.resultCode, item.message, duplicate);
     }
 
     private ImportMapper.ItemInsert base(long batchId, int order, String filename, byte[] file, byte[] hash) {
         ImportMapper.ItemInsert item = new ImportMapper.ItemInsert();
         item.tenantId = properties.tenantId(); item.batchId = batchId; item.itemOrder = order;
-        item.filename = filename == null ? "unnamed.xlsx" : filename.substring(0, Math.min(filename.length(), 255));
+        item.filename = ImportFilename.safe(filename);
         item.fileSize = file.length; item.fileSha256 = hash; item.templateVersion = ExcelTemplateV1.VERSION;
         return item;
     }

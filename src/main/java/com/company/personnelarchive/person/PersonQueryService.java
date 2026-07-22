@@ -15,16 +15,19 @@ import java.util.List;
 @Service
 /**
  * 人员档案只读用例：列表、详情和家庭成员模糊查询都限定为当前有效快照。
- * 对外 DTO 只给必要字段，身份证详情固定脱敏，年龄按注入时钟即时计算。
+ * 基础详情只返回前四后三脱敏值；完整身份证与手机号必须通过单字段敏感读取显式获取。
  */
 public class PersonQueryService {
     private final PersonReadMapper mapper;
     private final ArchiveProperties properties;
     private final Clock clock;
     private final AuditService audit;
+    private final IdentityProtection identityProtection;
 
-    public PersonQueryService(PersonReadMapper mapper, ArchiveProperties properties, Clock clock, AuditService audit) {
+    public PersonQueryService(PersonReadMapper mapper, ArchiveProperties properties, Clock clock,
+                              AuditService audit, IdentityProtection identityProtection) {
         this.mapper = mapper; this.properties = properties; this.clock = clock; this.audit = audit;
+        this.identityProtection = identityProtection;
     }
 
     public PersonDtos.Detail detail(long personId, long operatorId) {
@@ -39,7 +42,8 @@ public class PersonQueryService {
                 value(member.politicalStatus()), value(member.organizationAndPosition())))
             .toList();
         PersonDtos.Detail detail = new PersonDtos.Detail(
-            String.valueOf(person.id()), value(person.employeeNo()), value(person.personName()), maskIdentity(person.idCardLastFour()),
+            String.valueOf(person.id()), value(person.employeeNo()), value(person.personName()),
+            maskIdentity(person.idCardCiphertext()),
             personal(person), employment(employment), education(education),
             education.stream().filter(row -> "MAIN".equals(row.educationType())).map(PersonQueryService::orderedText).toList(),
             mapper.findWork(properties.tenantId(), personId).stream().map(PersonQueryService::orderedText).toList(),
@@ -50,6 +54,18 @@ public class PersonQueryService {
             new PersonDtos.ArchiveMetadata(value(person.templateVersion()), person.snapshotVersion(), person.updatedAt().toString()));
         audit.record(operatorId, "VIEW", "PERSON", personId, "SUCCESS", true);
         return detail;
+    }
+
+    public PersonDtos.SensitiveValue sensitiveValue(long personId, PersonDtos.SensitiveField field,
+                                                     long operatorId) {
+        PersonReadMapper.PersonRow person = requireActive(personId);
+        String value = switch (field) {
+            case IDENTITY_CARD -> person.idCardCiphertext() == null
+                ? "" : identityProtection.decrypt(person.idCardCiphertext());
+            case PHONE_NUMBER -> value(person.phoneNumber());
+        };
+        audit.recordSensitiveView(operatorId, personId, field.name());
+        return new PersonDtos.SensitiveValue(value);
     }
 
     public PhotoContent photo(long personId, long operatorId) {
@@ -107,8 +123,8 @@ public class PersonQueryService {
         return Normalizer.normalize(input, Normalizer.Form.NFKC).strip();
     }
 
-    private static String maskIdentity(String lastFour) {
-        return lastFour == null || lastFour.isBlank() ? "" : "**************" + lastFour;
+    private String maskIdentity(byte[] ciphertext) {
+        return ciphertext == null ? "" : SensitiveValueMasker.mask(identityProtection.decrypt(ciphertext));
     }
 
     private static String escapeLike(String input) {
@@ -119,7 +135,8 @@ public class PersonQueryService {
         return new PersonDtos.PersonalInfo(value(person.gender()), date(person.birthDate()), value(person.nation()),
             value(person.nativePlace()), value(person.birthPlace()), value(person.politicalStatus()),
             date(person.politicalJoinDate()), value(person.maritalStatus()), value(person.healthStatus()),
-            value(person.mailingAddress()), value(person.postalCode()), value(person.phoneNumber()));
+            value(person.mailingAddress()), value(person.postalCode()),
+            SensitiveValueMasker.mask(person.phoneNumber()));
     }
 
     private static PersonDtos.EmploymentDetails employment(PersonReadMapper.EmploymentRow row) {

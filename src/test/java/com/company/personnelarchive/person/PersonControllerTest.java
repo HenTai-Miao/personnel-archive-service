@@ -17,6 +17,26 @@ import static org.mockito.Mockito.when;
 
 class PersonControllerTest {
     @Test
+    void returnsNoStoreResponseWhenRevealingSensitiveValue() {
+        // Given
+        PersonQueryService queries = mock(PersonQueryService.class);
+        when(queries.sensitiveValue(7, PersonDtos.SensitiveField.IDENTITY_CARD, 9))
+            .thenReturn(new PersonDtos.SensitiveValue("123456789012345678"));
+        var controller = new PersonController(queries, mock(ArchiveExportService.class),
+            mock(BatchArchiveExportService.class));
+        var principal = new AuthPrincipal(9, 1, "tester", Set.of("VIEWER"));
+
+        // When
+        var response = controller.sensitiveValue(
+            7, PersonDtos.SensitiveField.IDENTITY_CARD, principal);
+
+        // Then
+        assertThat(response.getHeaders().getCacheControl()).isEqualTo("no-store");
+        assertThat(response.getBody()).isEqualTo(new PersonDtos.SensitiveValue("123456789012345678"));
+        verify(queries).sensitiveValue(7, PersonDtos.SensitiveField.IDENTITY_CARD, 9);
+    }
+
+    @Test
     void returnsNoStorePngWhenReadingStoredPhoto() throws Exception {
         // Given
         PersonQueryService queries = mock(PersonQueryService.class);

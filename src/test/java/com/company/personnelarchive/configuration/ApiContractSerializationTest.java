@@ -46,9 +46,9 @@ class ApiContractSerializationTest {
             new AuthService.UserResponse("7", "tester", "测试用户", Set.of("VIEWER")));
         var educationSummary = new PersonDtos.EducationSummary("全日制大学", "档案学", "本科", "学士");
         var detail = new PersonDtos.Detail(
-            "7", "E-1", "测试甲", "**************0012",
+            "7", "E-1", "测试甲", "1234***********012",
             new PersonDtos.PersonalInfo("女", "2000-01-01", "汉族", "湖南", "长沙", "中共党员",
-                "2021-07-01", "已婚", "健康", "测试地址", "410000", "00000002"),
+                "2021-07-01", "已婚", "健康", "测试地址", "410000", "0000*002"),
             new PersonDtos.EmploymentDetails("测试单位", "测试部门", "2020-01-01", "2021-01-01",
                 "测试职务", "测试技能", "2022-01-01"),
             new PersonDtos.EducationDetails(educationSummary, new PersonDtos.EducationSummary("", "", "", "")),
@@ -70,7 +70,14 @@ class ApiContractSerializationTest {
         assertThat(json.at("/familyMembers/0/politicalStatus").asText()).isEqualTo("群众");
         assertThat(json.at("/declaration/signer").asText()).isEqualTo("测试甲");
         assertThat(json.at("/photo/mimeType").asText()).isEqualTo("image/png");
+        assertThat(json.at("/personal/phoneNumberMasked").asText()).isEqualTo("0000*002");
+        assertThat(json.at("/personal/phoneNumber").isMissingNode()).isTrue();
         assertThat(json).hasSize(14);
+
+        var sensitive = mapper.readTree(mapper.writeValueAsBytes(
+            new PersonDtos.SensitiveValue("123456789012345678")));
+        assertThat(sensitive).hasSize(1);
+        assertThat(sensitive.at("/value").asText()).isEqualTo("123456789012345678");
     }
 
     @Test

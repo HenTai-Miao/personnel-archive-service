@@ -37,6 +37,12 @@ public class AuditService {
             batchId, itemId, "SUCCESS", null, java.util.UUID.randomUUID().toString());
     }
 
+    public void recordSensitiveView(long userId, long personId, String fieldCode) {
+        // 只记录所查看的字段类型，不记录身份证或手机号本身。
+        mapper.insert(properties.tenantId(), userId, "VIEW", "PERSON_SENSITIVE_" + safe(fieldCode), personId,
+            personId, null, null, null, "SUCCESS", null, java.util.UUID.randomUUID().toString());
+    }
+
     static String safe(String value) {
         if (value == null) return null;
         return value.replaceAll("[\\r\\n\\t]", "_").substring(0, Math.min(value.length(), 64));

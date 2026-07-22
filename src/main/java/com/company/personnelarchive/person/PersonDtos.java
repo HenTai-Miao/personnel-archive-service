@@ -1,4 +1,4 @@
-/* 人员 API DTO：定义完整但脱敏的档案详情、列表和家庭成员匹配结果，不直接暴露数据库实体。 */
+/* 人员 API DTO：定义默认脱敏详情、按需敏感值、列表和家庭成员匹配结果，不直接暴露数据库实体。 */
 package com.company.personnelarchive.person;
 
 import java.util.List;
@@ -15,7 +15,10 @@ public final class PersonDtos {
     public record PersonalInfo(String gender, String birthDate, String nation, String nativePlace,
                                String birthPlace, String politicalStatus, String politicalJoinDate,
                                String maritalStatus, String healthStatus, String mailingAddress,
-                               String postalCode, String phoneNumber) {}
+                               String postalCode, String phoneNumberMasked) {}
+
+    public enum SensitiveField { IDENTITY_CARD, PHONE_NUMBER }
+    public record SensitiveValue(String value) {}
 
     public record EmploymentDetails(String organization, String department, String workStartDate,
                                     String dispatchedToBiddingCompanyDate, String position,

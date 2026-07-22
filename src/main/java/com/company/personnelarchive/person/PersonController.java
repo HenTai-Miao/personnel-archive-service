@@ -61,6 +61,16 @@ public class PersonController {
         return queries.detail(personId, principal.userId());
     }
 
+    @GetMapping("/persons/{personId}/sensitive-value")
+    public ResponseEntity<PersonDtos.SensitiveValue> sensitiveValue(
+        @PathVariable @Min(1) long personId,
+        @RequestParam PersonDtos.SensitiveField field,
+        @AuthenticationPrincipal AuthPrincipal principal) {
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CACHE_CONTROL, "no-store")
+            .body(queries.sensitiveValue(personId, field, principal.userId()));
+    }
+
     @GetMapping("/persons/{personId}/photo")
     public ResponseEntity<ByteArrayResource> photo(@PathVariable @Min(1) long personId,
                                                    @AuthenticationPrincipal AuthPrincipal principal) {
