@@ -29,6 +29,7 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 - Encrypt full identity-card data with authenticated encryption; keep encryption/HMAC keys outside the database and repository.
 - Store photos as bounded binary BLOBs with MIME, byte count, dimensions, filename, and SHA-256.
 - Store family birth dates and calculate age using an injected `Clock` so tests are deterministic.
+- MySQL `DATETIME(6)` audit and snapshot timestamps use China wall-clock time. Every service JDBC URL must set `connectionTimeZone=Asia/Shanghai`; Java reads API timestamps as `Instant`, and Jackson serializes those instants in UTC. Do not compensate in a client.
 - Never point automated tests at the user's running `local-mysql` container.
 
 ## API AND AUTH

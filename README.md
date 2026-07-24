@@ -14,6 +14,8 @@ Excel 业务字段均可留空；仅对已填写的身份证执行格式与加�
 
 `PA_DB_URL`、`PA_DB_USERNAME`、`PA_DB_PASSWORD`、`PA_TOKEN_PEPPER`、`PA_IDENTITY_HMAC_KEY`、`PA_IDENTITY_ENCRYPTION_KEY`。
 
+自定义 `PA_DB_URL` 必须包含 `connectionTimeZone=Asia/Shanghai`。MySQL `DATETIME` 保存中国本地时间，服务将其映射为准确的 UTC `Instant` 后再通过 API 输出；不要在客户端固定增减八小时。
+
 首次且仅在数据库没有任何用户时，可显式提供 `PA_BOOTSTRAP_ADMIN_USERNAME`、至少 12 字符的 `PA_BOOTSTRAP_ADMIN_PASSWORD` 和可选 `PA_BOOTSTRAP_ADMIN_DISPLAY_NAME` 创建 ADMIN。系统没有默认账号或默认密码；创建后应移除这三个引导变量。
 
 ```bash
