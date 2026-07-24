@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: 人员档案数据服务 API
   version: 1.5.0
-  description: 业务日期使用 yyyy-MM-dd，时间戳使用 ISO-8601；V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
+  description: 业务日期使用 yyyy-MM-dd；时间戳是从 Asia/Shanghai 数据库时间映射得到的 UTC ISO-8601 时间点。V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
 servers:
   - url: /api/v1
 security:

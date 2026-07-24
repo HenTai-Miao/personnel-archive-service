@@ -3,7 +3,7 @@ spring:
     activate:
       on-profile: local
   datasource:
-    url: "jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true"
+    url: "jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true"
     username: personnel_archive_local
     password: "8b1b9f9108900ea9a4f59b55f928ec5c"
 
