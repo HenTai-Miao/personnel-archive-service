@@ -1,4 +1,4 @@
-/* 人员 HTTP 边界：提供有效档案列表、详情、家庭搜索和授权导出响应。 */
+/* 人员 HTTP 边界：提供有效档案列表、详情、软删除、家庭搜索和授权导出响应。 */
 package com.company.personnelarchive.person;
 
 import com.company.personnelarchive.archiveexport.ArchiveExportService;
@@ -38,10 +38,14 @@ public class PersonController {
     private final PersonQueryService queries;
     private final ArchiveExportService exports;
     private final BatchArchiveExportService batchExports;
+    private final PersonDeletionService deletions;
 
     public PersonController(PersonQueryService queries, ArchiveExportService exports,
-                            BatchArchiveExportService batchExports) {
-        this.queries = queries; this.exports = exports; this.batchExports = batchExports;
+                            BatchArchiveExportService batchExports, PersonDeletionService deletions) {
+        this.queries = queries;
+        this.exports = exports;
+        this.batchExports = batchExports;
+        this.deletions = deletions;
     }
 
     @GetMapping("/persons")
@@ -59,6 +63,15 @@ public class PersonController {
     public PersonDtos.Detail detail(@PathVariable @Min(1) long personId,
                                     @AuthenticationPrincipal AuthPrincipal principal) {
         return queries.detail(personId, principal.userId());
+    }
+
+    @PostMapping(value = "/persons/{personId}/deletion", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Void> delete(
+        @PathVariable @Min(1) long personId,
+        @Valid @RequestBody DeletionRequest request,
+        @AuthenticationPrincipal AuthPrincipal principal) {
+        deletions.delete(personId, request.reason(), principal.userId());
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/persons/{personId}/sensitive-value")
@@ -120,4 +133,8 @@ public class PersonController {
             default -> throw new BusinessException(ErrorCode.INTERNAL_ERROR, "档案照片类型无效");
         };
     }
+
+    public record DeletionRequest(
+        @NotBlank @Size(max = PersonDeletionService.MAX_REASON_LENGTH) String reason
+    ) {}
 }

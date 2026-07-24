@@ -26,6 +26,13 @@ class MySqlMigrationIntegrationTest {
     void migrationEnforcesActiveOnlyUniquenessAndAllowsHistory() {
         Flyway.configure().dataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword()).load().migrate();
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword()));
+        assertThat(jdbc.queryForObject("""
+            SELECT DATA_TYPE
+            FROM information_schema.columns
+            WHERE table_schema='personnel_archive'
+              AND table_name='pa_person'
+              AND column_name='delete_reason'
+            """, String.class)).isEqualTo("longtext");
         Integer tableCount = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='personnel_archive' AND table_name NOT LIKE 'flyway%'", Integer.class);
         assertThat(tableCount).isEqualTo(15);
         jdbc.update("INSERT INTO sys_user (tenant_id,username,normalized_username,password_hash,display_name) VALUES (1,'test_admin','test_admin','not-a-runtime-hash','测试管理员')");

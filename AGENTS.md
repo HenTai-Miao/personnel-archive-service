@@ -4,8 +4,8 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 
 ## CURRENT SERVICE STATUS
 
-- Implemented APIs cover authentication/session lifecycle, manual batch import, duplicate decisions, persistent paginated import history, active archive list/complete detail with masked identity-card/phone values, authenticated no-store single-field reveal and photo bytes, family-member search, single XLSX export, and selected batch ZIP export.
-- Implemented schema migrations are V1 initial schema, V2 photo-anchor preservation, and V3 optional employee/name/identity support; photos are stored as BLOBs with reconstruction metadata.
+- Implemented APIs cover authentication/session lifecycle, manual batch import, duplicate decisions, persistent paginated import history, active archive list/complete detail with masked identity-card/phone values, ADMIN/ARCHIVE_EDITOR reasoned soft deletion, authenticated no-store single-field reveal and photo bytes, family-member search, single XLSX export, and selected batch ZIP export.
+- Implemented schema migrations are V1 initial schema, V2 photo-anchor preservation, V3 optional employee/name/identity support, and V4 `delete_reason` expansion to `LONGTEXT`; photos are stored as BLOBs with reconstruction metadata.
 - Import decisions use a bounded in-memory parsed-document store, so a service restart intentionally makes an outstanding decision stale and requires re-upload.
 - Desktop folder scanning and source-file moves are intentionally client-side and are implemented by the current client; the service remains authoritative for import success and exposes no local-path API.
 - Update this section in the same change whenever an endpoint, migration, persistence rule, or supported workflow changes.
@@ -25,6 +25,7 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 - Use `BIGINT`, `snake_case`, `utf8mb4`, and explicit foreign keys/indexes.
 - Include server-controlled `tenant_id`; version 1 always resolves it to `1` and ignores/rejects client input.
 - `pa_person` owns snapshot state: `is_deleted` defaults to `0`; also record `deleted_at`, `deleted_by`, `delete_reason`, and `replaced_by_person_id`. Old children remain unchanged under the old `person_id`.
+- Manual archive deletion accepts a trimmed, nonblank reason of at most 10,000 characters, stores it in the `LONGTEXT` `delete_reason`, and leaves `replaced_by_person_id`, child rows, photos, and import history unchanged.
 - Enforce supplied nonblank employee-number and identity-card uniqueness only for active snapshots. Nullable generated `active_employee_no`/`active_id_card_hmac` columns become `NULL` for blank/absent identifiers and deleted rows, then unique-index with `tenant_id`; never use `(value, is_deleted)` uniqueness.
 - Encrypt full identity-card data with authenticated encryption; keep encryption/HMAC keys outside the database and repository.
 - Store photos as bounded binary BLOBs with MIME, byte count, dimensions, filename, and SHA-256.
@@ -39,8 +40,9 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 - Every normal person/detail/duplicate/family/export query filters `pa_person.is_deleted = 0`. Escape `%`, `_`, and the escape character in family-name contains queries; paginate all matched active rows, with 20 rows as the default page size for personnel and family-member queries.
 - Base detail DTOs expose every persisted workbook section while returning only front-four/back-three identity-card and phone masks; short nonblank values are fully masked. The service decrypts an identity card only long enough to produce that mask. A separate authenticated endpoint rechecks the active snapshot and returns one explicitly requested full identity-card or phone value with caching disabled and a value-free view audit. Photo metadata remains in detail; raw JPEG/PNG bytes use their own authenticated, no-store, audited endpoint.
 - Use Spring Security with `ADMIN`, `ARCHIVE_EDITOR`, and `VIEWER` permissions.
+- Restrict `POST /api/v1/persons/{personId}/deletion` to `ADMIN`/`ARCHIVE_EDITOR`; update only the tenant-scoped active row so repeated or stale attempts return `NOT_FOUND` without another audit event.
 - Passwords use an adaptive hash. Access/session credentials expire and are revocable; store refresh tokens only as hashes.
-- Record login, import, overwrite, skip, edit, view, export, and administration actions without sensitive payloads; overwrite audit stores the old/new `person_id` and operator.
+- Record login, import, overwrite, skip, edit, delete, view, export, and administration actions without sensitive payloads; overwrite audit stores the old/new `person_id` and operator, while delete audit stores action/person/operator metadata but never the free-text reason.
 - Import-history reads are tenant-scoped, authorized for `ADMIN`/`ARCHIVE_EDITOR`, and audited as views. Normalize upload names to a nonblank basename before parsing/persistence, return the actual decision operator for overwrite/skip, and never expose source bytes, stored file hashes, or client-local paths.
 - Secrets come from environment/secret injection. Never commit database passwords, token keys, or field-encryption keys.
 
@@ -80,7 +82,7 @@ Real-MySQL Testcontainers suites use `disabledWithoutDocker = true`: they run wh
 
 For macOS manual testing, the root `../启动本地测试.command` starts Docker Desktop and the existing local MySQL container, runs this service with the `local` profile, waits for `/api/v1`, and verifies the configured bootstrap-admin login before opening the client. It must never create, reset, or delete the user's database volume.
 
-Cover template validation, optional/partially filled fields, date/age calculation, duplicate precheck, default skip, overwrite history, persistent import-history pagination, repeated overwrites, active-only uniqueness/querying, stale/concurrent decisions, rollback, fuzzy search, authorization, identity/phone masking and explicit reveal, audit redaction, lossless export, and photo insertion. Every schema change includes a Flyway migration and MySQL integration test; every API change updates OpenAPI and client types.
+Cover template validation, optional/partially filled fields, date/age calculation, duplicate precheck, default skip, overwrite history, reasoned soft deletion, persistent import-history pagination, repeated overwrites/deletes, active-only uniqueness/querying, stale/concurrent decisions, rollback, fuzzy search, authorization, identity/phone masking and explicit reveal, audit redaction, lossless export, and photo insertion. Every schema change includes a Flyway migration and MySQL integration test; every API change updates OpenAPI and client types.
 
 ## CODE DOCUMENTATION
 
