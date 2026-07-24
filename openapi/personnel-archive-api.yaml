@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 人员档案数据服务 API
-  version: 1.5.0
+  version: 1.6.0
   description: 业务日期使用 yyyy-MM-dd，时间戳使用 ISO-8601；V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
 servers:
   - url: /api/v1
@@ -171,6 +171,23 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PersonDetail' }
         '404': { $ref: '#/components/responses/Error' }
+  /persons/{personId}/deletion:
+    post:
+      operationId: deletePersonArchive
+      description: ADMIN 或 ARCHIVE_EDITOR 将活动档案软删除；保留全部子表、照片和历史数据，删除原因不写入审计日志。
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PersonDeletionRequest' }
+      responses:
+        '204': { description: 档案已软删除 }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /persons/{personId}/sensitive-value:
     get:
       operationId: getPersonSensitiveValue
@@ -285,6 +302,12 @@ components:
       required: [refreshToken]
       properties:
         refreshToken: { type: string, minLength: 1 }
+    PersonDeletionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 10000, default: 误导入 }
     User:
       type: object
       additionalProperties: false

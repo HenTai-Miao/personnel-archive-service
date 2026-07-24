@@ -23,7 +23,7 @@ class PersonControllerTest {
         when(queries.sensitiveValue(7, PersonDtos.SensitiveField.IDENTITY_CARD, 9))
             .thenReturn(new PersonDtos.SensitiveValue("123456789012345678"));
         var controller = new PersonController(queries, mock(ArchiveExportService.class),
-            mock(BatchArchiveExportService.class));
+            mock(BatchArchiveExportService.class), mock(PersonDeletionService.class));
         var principal = new AuthPrincipal(9, 1, "tester", Set.of("VIEWER"));
 
         // When
@@ -43,7 +43,7 @@ class PersonControllerTest {
         when(queries.photo(7, 9)).thenReturn(new PersonQueryService.PhotoContent(
             new byte[]{(byte) 0x89, 0x50}, "image/png", "fixture.png"));
         var controller = new PersonController(queries, mock(ArchiveExportService.class),
-            mock(BatchArchiveExportService.class));
+            mock(BatchArchiveExportService.class), mock(PersonDeletionService.class));
         var principal = new AuthPrincipal(9, 1, "tester", Set.of("VIEWER"));
 
         // When
@@ -57,5 +57,22 @@ class PersonControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getByteArray()).containsExactly((byte) 0x89, (byte) 0x50);
         verify(queries).photo(7, 9);
+    }
+
+    @Test
+    void returnsNoContentAfterDeletingAnArchive() {
+        // Given
+        PersonDeletionService deletions = mock(PersonDeletionService.class);
+        var controller = new PersonController(mock(PersonQueryService.class), mock(ArchiveExportService.class),
+            mock(BatchArchiveExportService.class), deletions);
+        var principal = new AuthPrincipal(9, 1, "tester", Set.of("ARCHIVE_EDITOR"));
+
+        // When
+        var response = controller.delete(7, new PersonController.DeletionRequest("误导入"), principal);
+
+        // Then
+        assertThat(response.getStatusCode().value()).isEqualTo(204);
+        assertThat(response.getBody()).isNull();
+        verify(deletions).delete(7, "误导入", 9);
     }
 }
