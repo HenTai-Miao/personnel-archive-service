@@ -9,7 +9,8 @@ import java.util.Set;
 @Service
 public class AuditService {
     private static final Set<String> ACTIONS = Set.of(
-        "LOGIN", "LOGIN_FAILED", "LOGOUT", "IMPORT", "OVERWRITE", "SKIP", "EDIT", "VIEW", "EXPORT", "ADMINISTRATION"
+        "LOGIN", "LOGIN_FAILED", "LOGOUT", "IMPORT", "OVERWRITE", "SKIP", "EDIT", "VIEW", "EXPORT", "DELETE",
+        "ADMINISTRATION"
     );
     private final AuditMapper mapper;
     private final ArchiveProperties properties;
