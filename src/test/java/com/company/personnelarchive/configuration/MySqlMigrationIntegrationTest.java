@@ -5,6 +5,7 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.dao.DataAccessException;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -46,6 +47,19 @@ class MySqlMigrationIntegrationTest {
         jdbc.update("UPDATE pa_person SET is_deleted=1,deleted_at=CURRENT_TIMESTAMP(6),deleted_by=?,delete_reason='TEST',updated_by=? WHERE id=?", userId, userId, firstId);
         jdbc.update(insert, "T-001", "测试乙", "测试乙", new byte[]{2}, new byte[32], "0000", userId, userId);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pa_person WHERE employee_no='T-001'", Integer.class)).isEqualTo(2);
+        long activePersonId = jdbc.queryForObject(
+            "SELECT id FROM pa_person WHERE employee_no='T-001' AND is_deleted=0", Long.class);
+        String familyInsert = """
+            INSERT INTO pa_family_member
+              (tenant_id,person_id,relationship_name,member_name,normalized_member_name,sort_order)
+            VALUES (1,?,'测试称谓','测试成员','测试成员',?)
+            """;
+        jdbc.update(familyInsert, activePersonId, 10);
+        assertThat(jdbc.queryForObject(
+            "SELECT sort_order FROM pa_family_member WHERE person_id=?", Integer.class, activePersonId))
+            .isEqualTo(10);
+        assertThatThrownBy(() -> jdbc.update(familyInsert, activePersonId, 0))
+            .isInstanceOf(DataAccessException.class);
 
         String optionalInsert = "INSERT INTO pa_person (tenant_id,employee_no,person_name,normalized_name,template_version,created_by,updated_by) VALUES (1,'','','','V1',?,?)";
         jdbc.update(optionalInsert, userId, userId);

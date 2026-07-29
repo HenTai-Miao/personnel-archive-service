@@ -5,7 +5,7 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 ## CURRENT SERVICE STATUS
 
 - Implemented APIs cover authentication/session lifecycle, manual batch import, duplicate decisions, persistent paginated import history, active archive list/complete detail with masked identity-card/phone values, ADMIN/ARCHIVE_EDITOR reasoned soft deletion, authenticated no-store single-field reveal and photo bytes, family-member search, single XLSX export, and selected batch ZIP export.
-- Implemented schema migrations are V1 initial schema, V2 photo-anchor preservation, V3 optional employee/name/identity support, and V4 `delete_reason` expansion to `LONGTEXT`; photos are stored as BLOBs with reconstruction metadata.
+- Implemented schema migrations are V1 initial schema, V2 photo-anchor preservation, V3 optional employee/name/identity support, V4 `delete_reason` expansion to `LONGTEXT`, and V5 removal of the six-member family-order ceiling; photos are stored as BLOBs with reconstruction metadata.
 - Import decisions use a bounded in-memory parsed-document store, so a service restart intentionally makes an outstanding decision stale and requires re-upload.
 - Desktop folder scanning and source-file moves are intentionally client-side and are implemented by the current client; the service remains authoritative for import success and exposes no local-path API.
 - Update this section in the same change whenever an endpoint, migration, persistence rule, or supported workflow changes.
@@ -48,23 +48,24 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 
 ## EXCEL IMPORT
 
-- Treat upload content as hostile: verify XLSX signature/type, size, template version, sheets, labels, merges, values, and images.
+- Treat upload content as hostile: verify XLSX signature/type, size, template version, sheets, exact normalized labels, section order, values, and images. Historical section merges and row numbers may differ from the clean template.
 - Configure Apache POI zip-bomb and memory limits before parsing.
-- Use a versioned coordinate/label map; do not depend on invalid workbook named ranges.
+- Use the V1 exact-label layout resolver for scalar fields and section boundaries; do not depend on invalid workbook named ranges or infer a field from fuzzy text.
 - Do not require any workbook business field. Preserve blank and partially filled rows, including empty employee number, name, and identity card; preserve identifier, phone, postal, and textual date values without losing leading zeros.
+- Main-sheet family rows are authoritative and have no business count ceiling. Associate a helper-sheet birth date only through an explicit `家庭成员年龄计算!D<n>` formula reference or one unique normalized exact relationship/name match; otherwise keep the date blank and ignore unmatched helper residue.
 - Normalize supplied names with Unicode NFKC/trimmed whitespace for matching. Only a nonblank identity card is normalized, validated, encrypted, HMAC-indexed, and given a display suffix; an absent identity card remains `NULL` in all protected columns.
 - Process one workbook per transaction. Batch aggregation happens outside those transactions.
 - Match duplicates only when both incoming values are supplied and normalized name plus identity-card HMAC equal one active snapshot, then return `DUPLICATE_REQUIRES_DECISION` without writing archive data. Manual selection and desktop folder scanning call this same endpoint and decision service.
 - A supplied identity card with a different normalized name is `IDENTITY_CARD_CONFLICT`; a supplied nonblank employee number owned by another snapshot is `EMPLOYEE_NO_CONFLICT`. Blank identifiers skip their conflict lookups, and the same name with a different identity card is not a duplicate.
 - On decision, lock and recheck the active target. `SKIP` changes no archive table. `OVERWRITE` atomically soft-deletes the old root, inserts a complete new root/children/photo snapshot, and links old to new; never update/delete old children.
 - If the target changed since precheck, return a stale-decision result. Any failure rolls back both the old-row soft delete and every new insert.
-- Enforce template capacities `5/16/4/6` and reject overflow; never truncate.
+- Enforce the fixed-section capacities `5/16/4` for main education/work/reward rows and reject overflow; family rows are label-bounded and persist with any positive sort order. Never truncate.
 - Delete framework upload temp files and application temp files on every success/failure path.
 
 ## EXCEL EXPORT
 
 - Keep a cleaned, immutable, versioned template in application resources or configured read-only storage.
-- Fill values from the database, preserve row ordering/raw text, compute family ages, and insert one validated photo in the template photo area.
+- Fill values from the database, preserve row ordering/raw text, compute family ages, and insert one validated photo in the template photo area. When a snapshot has more than six family rows, expand both family sections and shift the declaration/page breaks before writing every row.
 - Fixed wording and layout come from the template, not database duplication.
 - Stream the resulting `.xlsx`; do not retain it or upload it to object storage.
 - Batch export accepts 1–100 distinct string IDs, caps aggregate uncompressed workbook bytes, fails before returning any ZIP when one reconstruction fails, prevents duplicate ZIP entry names, and records successful export audit rows only after the complete package is built.
@@ -82,7 +83,7 @@ Real-MySQL Testcontainers suites use `disabledWithoutDocker = true`: they run wh
 
 For macOS manual testing, the root `../启动本地测试.command` starts Docker Desktop and the existing local MySQL container, runs this service with the `local` profile, waits for `/api/v1`, and verifies the configured bootstrap-admin login before opening the client. It must never create, reset, or delete the user's database volume.
 
-Cover template validation, optional/partially filled fields, date/age calculation, duplicate precheck, default skip, overwrite history, reasoned soft deletion, persistent import-history pagination, repeated overwrites/deletes, active-only uniqueness/querying, stale/concurrent decisions, rollback, fuzzy search, authorization, identity/phone masking and explicit reveal, audit redaction, lossless export, and photo insertion. Every schema change includes a Flyway migration and MySQL integration test; every API change updates OpenAPI and client types.
+Cover exact-label layout resolution, historical row shifts, optional/partially filled fields, evidence-based family birth-date association, month/date calculation, duplicate precheck, default skip, overwrite history, reasoned soft deletion, persistent import-history pagination, repeated overwrites/deletes, active-only uniqueness/querying, stale/concurrent decisions, rollback, fuzzy search, authorization, identity/phone masking and explicit reveal, audit redaction, dynamic-family lossless export, and photo insertion. Every schema change includes a Flyway migration and MySQL integration test; every API change updates OpenAPI and client types.
 
 ## CODE DOCUMENTATION
 

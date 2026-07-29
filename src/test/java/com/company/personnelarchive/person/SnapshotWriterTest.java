@@ -11,11 +11,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -67,6 +72,27 @@ class SnapshotWriterTest {
         assertThat(person.getValue().idCardLastFour).isNull();
         verify(mapper).insertFamily(1, 7, "", "", "", null, "群众", null,
             "\t\t\t群众\t", 1);
+    }
+
+    @Test
+    void insertsEveryFamilyMemberBeyondTemplateSixRows() {
+        List<ArchiveDocument.FamilyMember> members = IntStream.range(0, 10)
+            .mapToObj(index -> new ArchiveDocument.FamilyMember(
+                index, "称谓" + index, "成员" + index, null, "", ""))
+            .toList();
+        ArchiveDocument document = document(members);
+        doAnswer(invocation -> {
+            ((PersonMapper.PersonInsert) invocation.getArgument(0)).id = 7L;
+            return 1;
+        }).when(mapper).insertPerson(any());
+
+        SnapshotWriter.PreparedArchive prepared = writer.prepare(document);
+        writer.insert(prepared, 9, 1, null);
+
+        ArgumentCaptor<Integer> orders = ArgumentCaptor.forClass(Integer.class);
+        verify(mapper, times(10)).insertFamily(eq(1L), eq(7L), anyString(), anyString(), anyString(),
+            isNull(), isNull(), isNull(), anyString(), orders.capture());
+        assertThat(orders.getAllValues()).containsExactly(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
     }
 
     private static ArchiveDocument document(List<ArchiveDocument.FamilyMember> family) {

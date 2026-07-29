@@ -9,7 +9,6 @@ import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.util.CellAddress;
-import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFPictureData;
 import org.apache.poi.xssf.usermodel.XSSFPicture;
 import org.apache.poi.xssf.usermodel.XSSFDrawing;
@@ -27,19 +26,19 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 
 @Component
 /**
  * V1 人员档案工作簿的受信边界。
  *
- * <p>上传内容按敌对输入处理：先限制 ZIP 解压，再验证工作表结构，最后才按显式坐标映射
- * 用户数据。不能改成依赖模板内已损坏的命名范围，也不能在这里静默截断超容量行。</p>
+ * <p>上传内容按敌对输入处理：先限制 ZIP 解压，再用精确标签解析工作表结构，最后映射
+ * 用户数据。不能依赖模板内已损坏的命名范围，也不能根据模糊文字或剩余行猜测字段归属。</p>
  */
 public class ExcelArchiveReader {
     private static final byte[] ZIP_SIGNATURE = {0x50, 0x4b, 0x03, 0x04};
@@ -52,6 +51,9 @@ public class ExcelArchiveReader {
     private static final Pattern MONTH = Pattern.compile("^(\\d{4})(?:[./-]|年)(\\d{1,2})(?:月)?$");
     private static final Pattern MONTH_RANGE = Pattern.compile(
         "^(\\d{4})(?:[./-]|年)(\\d{1,2})(?:月)?\\s*(?:-|—|–|~|至)\\s*(?:(\\d{4})(?:[./-]|年)(\\d{1,2})(?:月)?|至今|现在|今)$");
+    private static final Pattern HELPER_DATE_REFERENCE = Pattern.compile(
+        "(?:'" + Pattern.quote(ExcelTemplateV1.AGE_SHEET) + "'|" + Pattern.quote(ExcelTemplateV1.AGE_SHEET)
+            + ")!\\$?D\\$?(\\d+)");
 
     static {
         // Apache POI 的限制是进程级设置，必须在打开任何用户工作簿之前完成，以抵御 ZIP 炸弹。
@@ -79,7 +81,7 @@ public class ExcelArchiveReader {
             input.reset();
             if (!java.util.Arrays.equals(signature, ZIP_SIGNATURE)) throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE);
             try (XSSFWorkbook workbook = new XSSFWorkbook(input)) {
-                // 先确认固定标签与合并区域，避免在错误版本模板上读取同一坐标的无关数据。
+                // 先确认精确标签及区块顺序，避免在非业务模板中读取看似相同位置的无关数据。
                 validateStructure(workbook);
                 return map(workbook, originalFilename);
             }
@@ -91,90 +93,125 @@ public class ExcelArchiveReader {
     }
 
     public void validateStructure(XSSFWorkbook workbook) {
-        XSSFSheet sheet = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
-        XSSFSheet ageSheet = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
-        if (sheet == null || ageSheet == null) {
-            throw new BusinessException(ErrorCode.TEMPLATE_INVALID, "缺少 V1 工作表");
-        }
-        ExcelTemplateV1.LABELS.forEach((coordinate, expected) -> {
-            String actual = text(sheet, coordinate).replace("\r\n", "\n");
-            if (!expected.equals(actual)) {
-                throw new BusinessException(ErrorCode.TEMPLATE_INVALID, "模板标签不匹配：" + coordinate);
-            }
-        });
-        Set<String> merges = sheet.getMergedRegions().stream().map(CellRangeAddress::formatAsString).collect(Collectors.toSet());
-        if (!merges.containsAll(ExcelTemplateV1.REQUIRED_MERGES)) {
-            throw new BusinessException(ErrorCode.TEMPLATE_INVALID, "模板合并区域不匹配");
-        }
-        ExcelTemplateV1.AGE_LABELS.forEach((coordinate, expected) -> {
-            if (!expected.equals(text(ageSheet, coordinate).replace("\r\n", "\n"))) {
-                throw new BusinessException(ErrorCode.TEMPLATE_INVALID, "年龄计算表标签不匹配：" + coordinate);
-            }
-        });
-        if (ageSheet.getMergedRegions().stream().map(CellRangeAddress::formatAsString).noneMatch("A1:A7"::equals)) {
-            throw new BusinessException(ErrorCode.TEMPLATE_INVALID, "年龄计算表合并区域不匹配");
-        }
+        WorkbookLayoutV1.resolve(workbook, formatter);
     }
 
     private ArchiveDocument map(XSSFWorkbook workbook, String filename) {
-        // 坐标映射属于 V1 协议的一部分；模板换版时应新增版本映射，而不是猜测字段位置。
-        XSSFSheet sheet = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
-        XSSFSheet ageSheet = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
-        List<ArchiveDocument.OrderedText> education = readTextRows(sheet, 13, 17);
-        List<ArchiveDocument.OrderedText> work = readTextRows(sheet, 18, 33);
-        List<ArchiveDocument.OrderedText> rewards = readTextRows(sheet, 34, 37);
-        List<ArchiveDocument.FamilyMember> family = new ArrayList<>();
-        for (int row = 39; row <= 44; row++) {
-            String relationship = text(sheet, "B" + row);
-            String name = text(sheet, "C" + row);
-            int helperRow = row - 37;
-            String helperRelationship = text(ageSheet, "B" + helperRow);
-            String helperName = text(ageSheet, "C" + helperRow);
-            String political = text(sheet, "E" + row);
-            String workplace = text(sheet, "F" + row);
-            if (!String.join("", relationship, name, helperRelationship, helperName, political, workplace,
-                text(ageSheet, "D" + helperRow)).isBlank()) {
-                // 主表负责展示，辅助表保存出生日期；两边已有值时必须一致，不能悄悄任选其一。
-                if (!helperRelationship.isBlank() && !relationship.isBlank() && !helperRelationship.equals(relationship)
-                    || !helperName.isBlank() && !name.isBlank() && !helperName.equals(name)) {
-                    throw new BusinessException(ErrorCode.TEMPLATE_INVALID, "家庭成员主表与年龄计算表不一致：第 " + (row - 38) + " 行");
-                }
-                relationship = relationship.isBlank() ? helperRelationship : relationship;
-                name = name.isBlank() ? helperName : name;
-                family.add(new ArchiveDocument.FamilyMember(row - 39, relationship, name,
-                    parseDate(ageSheet, "D" + helperRow), political, workplace));
-            }
-        }
+        WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, formatter);
+        XSSFSheet sheet = layout.main();
+        List<ArchiveDocument.OrderedText> education = readTextRows(sheet, layout.educationRow(), layout.workRow());
+        List<ArchiveDocument.OrderedText> work = readTextRows(sheet, layout.workRow(), layout.rewardRow());
+        List<ArchiveDocument.OrderedText> rewards = readTextRows(sheet, layout.rewardRow(), layout.familyHeaderRow());
+        List<ArchiveDocument.FamilyMember> family = readFamily(layout);
         ArchiveDocument.Photo photo = extractPhoto(workbook, filename);
+        String declaration = joinNonBlank(sheet, layout.declarationValueRow(), 0, 8);
         ArchiveDocument document = new ArchiveDocument(
-            text(sheet, "B2"), text(sheet, "B3"), text(sheet, "B7"), text(sheet, "D3"), parseDate(sheet, "F3"),
-            text(sheet, "H3"), text(sheet, "B4"), text(sheet, "D4"), text(sheet, "F4"), parseDate(sheet, "H4"),
-            text(sheet, "F7"), text(sheet, "H7"), text(sheet, "B12"), text(sheet, "F12"), text(sheet, "H12"),
-            new ArchiveDocument.Employment(text(sheet, "B5"), parseDate(sheet, "F5"), parseDate(sheet, "H5"),
-                text(sheet, "B6"), text(sheet, "F6"), parseDate(sheet, "H6")),
-            new ArchiveDocument.EducationSummary(text(sheet, "F8"), text(sheet, "C8"), text(sheet, "F9"), text(sheet, "C9")),
-            new ArchiveDocument.EducationSummary(text(sheet, "F10"), text(sheet, "C10"), text(sheet, "F11"), text(sheet, "C11")),
-            education, work, rewards, family, photo, parseDeclarationSigner(text(sheet, "B46")),
-            parseDeclarationDate(text(sheet, "B46"))
+            text(sheet, layout.scalar("employeeNo")), text(sheet, layout.scalar("name")),
+            text(sheet, layout.scalar("identityCard")), text(sheet, layout.scalar("gender")),
+            parseDate(sheet, layout.scalar("birthDate")), text(sheet, layout.scalar("ethnicity")),
+            text(sheet, layout.scalar("nativePlace")), text(sheet, layout.scalar("birthPlace")),
+            text(sheet, layout.scalar("politicalStatus")), parseDate(sheet, layout.scalar("politicalJoinDate")),
+            text(sheet, layout.scalar("maritalStatus")), text(sheet, layout.scalar("healthStatus")),
+            text(sheet, layout.scalar("address")), text(sheet, layout.scalar("postalCode")),
+            text(sheet, layout.scalar("phone")),
+            new ArchiveDocument.Employment(text(sheet, layout.scalar("organizationDepartment")),
+                parseDate(sheet, layout.scalar("workStartDate")), parseDate(sheet, layout.scalar("dispatchDate")),
+                text(sheet, layout.scalar("position")), text(sheet, layout.scalar("titleSkill")),
+                parseDate(sheet, layout.scalar("titleObtainedDate"))),
+            new ArchiveDocument.EducationSummary(text(sheet, layout.scalar("fullTimeSchool")),
+                text(sheet, layout.scalar("fullTimeEducation")), text(sheet, layout.scalar("fullTimeMajor")),
+                text(sheet, layout.scalar("fullTimeDegree"))),
+            new ArchiveDocument.EducationSummary(text(sheet, layout.scalar("inServiceSchool")),
+                text(sheet, layout.scalar("inServiceEducation")), text(sheet, layout.scalar("inServiceMajor")),
+                text(sheet, layout.scalar("inServiceDegree"))),
+            education, work, rewards, family, photo, parseDeclarationSigner(declaration),
+            parseDeclarationDate(declaration)
         );
         document.validateCapacity();
         return document;
     }
 
-    private List<ArchiveDocument.OrderedText> readTextRows(XSSFSheet sheet, int first, int last) {
+    private List<ArchiveDocument.OrderedText> readTextRows(XSSFSheet sheet, int first, int lastExclusive) {
         List<ArchiveDocument.OrderedText> rows = new ArrayList<>();
-        for (int row = first; row <= last; row++) {
-            String left = text(sheet, "B" + row);
-            String right = text(sheet, "D" + row);
+        for (int row = first; row < lastExclusive; row++) {
+            String left = joinNonBlank(sheet, row, 1, 2);
+            String right = joinNonBlank(sheet, row, 3, 8);
             // raw_text 和原始行序是无损导出的依据；解析出的日期只用于结构化查询，不能替代原文。
             String raw = left.isBlank() ? right : right.isBlank() ? left : left + "\t" + right;
             if (!raw.isBlank()) {
                 DateRange range = parseMonthRange(left);
-                rows.add(new ArchiveDocument.OrderedText(row - first, left, right, raw, range.start(), range.end()));
+                rows.add(new ArchiveDocument.OrderedText(rows.size(), left, right, raw, range.start(), range.end()));
             }
         }
         return rows;
     }
+
+    private List<ArchiveDocument.FamilyMember> readFamily(WorkbookLayoutV1 layout) {
+        List<HelperFamilyRow> helperRows = readHelperRows(layout);
+        Set<Integer> usedHelperRows = new HashSet<>();
+        List<ArchiveDocument.FamilyMember> family = new ArrayList<>();
+        for (int row = layout.familyHeaderRow() + 1; row < layout.declarationValueRow(); row++) {
+            String relationship = text(layout.main(), row, 1);
+            String name = text(layout.main(), row, 2);
+            String age = text(layout.main(), row, 3);
+            String political = text(layout.main(), row, 4);
+            String workplace = joinNonBlank(layout.main(), row, 5, 8);
+            if (String.join("", relationship, name, age, political, workplace).isBlank()
+                && !isFormula(layout.main(), row, 3)) {
+                continue;
+            }
+            LocalDate birthDate = resolveFamilyBirthDate(layout, row, relationship, name, helperRows, usedHelperRows);
+            family.add(new ArchiveDocument.FamilyMember(family.size(), relationship, name, birthDate,
+                political, workplace));
+        }
+        return family;
+    }
+
+    private List<HelperFamilyRow> readHelperRows(WorkbookLayoutV1 layout) {
+        List<HelperFamilyRow> rows = new ArrayList<>();
+        int last = Math.min(layout.helper().getLastRowNum(), 10_000);
+        for (int row = layout.helperHeaderRow() + 1; row <= last; row++) {
+            String relationship = text(layout.helper(), row, 1);
+            String name = text(layout.helper(), row, 2);
+            String date = text(layout.helper(), row, 3);
+            if (!String.join("", relationship, name, date).isBlank() || isFormula(layout.helper(), row, 3)) {
+                rows.add(new HelperFamilyRow(row, relationship, name, new CellAddress(row, 3)));
+            }
+        }
+        return rows;
+    }
+
+    private LocalDate resolveFamilyBirthDate(WorkbookLayoutV1 layout, int mainRow, String relationship,
+                                             String name, List<HelperFamilyRow> helpers,
+                                             Set<Integer> usedHelperRows) {
+        Cell ageCell = cell(layout.main(), mainRow, 3);
+        if (ageCell != null && ageCell.getCellType() == CellType.FORMULA) {
+            var reference = HELPER_DATE_REFERENCE.matcher(ageCell.getCellFormula());
+            if (reference.find()) {
+                int referencedRow = Integer.parseInt(reference.group(1)) - 1;
+                return helpers.stream().filter(helper -> helper.row() == referencedRow).findFirst()
+                    .map(helper -> {
+                        usedHelperRows.add(helper.row());
+                        return parseDate(layout.helper(), helper.dateAddress());
+                    }).orElse(null);
+            }
+        }
+
+        String relationshipKey = WorkbookLayoutV1.normalized(relationship);
+        String nameKey = WorkbookLayoutV1.normalized(name);
+        if (relationshipKey.isBlank() && nameKey.isBlank()) return null;
+        List<HelperFamilyRow> matches = helpers.stream()
+            .filter(helper -> !usedHelperRows.contains(helper.row()))
+            .filter(helper -> relationshipKey.equals(WorkbookLayoutV1.normalized(helper.relationship())))
+            .filter(helper -> nameKey.equals(WorkbookLayoutV1.normalized(helper.name())))
+            .toList();
+        if (matches.size() != 1) return null;
+        HelperFamilyRow match = matches.getFirst();
+        usedHelperRows.add(match.row());
+        return parseDate(layout.helper(), match.dateAddress());
+    }
+
+    private record HelperFamilyRow(int row, String relationship, String name, CellAddress dateAddress) {}
 
     private static DateRange parseMonthRange(String raw) {
         if (raw == null || raw.isBlank()) return DateRange.EMPTY;
@@ -264,17 +301,39 @@ public class ExcelArchiveReader {
         return picture.getClientAnchor().getAnchorType().name();
     }
 
-    private String text(XSSFSheet sheet, String coordinate) {
-        CellAddress address = new CellAddress(coordinate);
-        Cell cell = sheet.getRow(address.getRow()) == null ? null : sheet.getRow(address.getRow()).getCell(address.getColumn());
+    private String text(XSSFSheet sheet, CellAddress address) {
+        Cell cell = cell(sheet, address.getRow(), address.getColumn());
         return cell == null ? "" : formatter.formatCellValue(cell).strip();
     }
 
-    private LocalDate parseDate(XSSFSheet sheet, String coordinate) {
-        CellAddress address = new CellAddress(coordinate);
-        Cell cell = sheet.getRow(address.getRow()) == null ? null : sheet.getRow(address.getRow()).getCell(address.getColumn());
+    private String text(XSSFSheet sheet, int row, int column) {
+        return text(sheet, new CellAddress(row, column));
+    }
+
+    private String joinNonBlank(XSSFSheet sheet, int row, int firstColumn, int lastColumn) {
+        List<String> values = new ArrayList<>();
+        for (int column = firstColumn; column <= lastColumn; column++) {
+            String value = text(sheet, row, column);
+            if (!value.isBlank()) values.add(value);
+        }
+        return String.join("\t", values);
+    }
+
+    private static Cell cell(XSSFSheet sheet, int row, int column) {
+        return sheet.getRow(row) == null ? null : sheet.getRow(row).getCell(column);
+    }
+
+    private static boolean isFormula(XSSFSheet sheet, int row, int column) {
+        Cell cell = cell(sheet, row, column);
+        return cell != null && cell.getCellType() == CellType.FORMULA;
+    }
+
+    private LocalDate parseDate(XSSFSheet sheet, CellAddress address) {
+        Cell cell = cell(sheet, address.getRow(), address.getColumn());
         if (cell == null || cell.getCellType() == CellType.BLANK) return null;
-        if (cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+        if ((cell.getCellType() == CellType.NUMERIC
+            || cell.getCellType() == CellType.FORMULA && cell.getCachedFormulaResultType() == CellType.NUMERIC)
+            && DateUtil.isCellDateFormatted(cell)) {
             return cell.getLocalDateTimeCellValue().toLocalDate();
         }
         String raw = formatter.formatCellValue(cell).strip();
@@ -282,7 +341,15 @@ public class ExcelArchiveReader {
         for (DateTimeFormatter dateFormatter : DATE_FORMATTERS) {
             try { return LocalDate.parse(raw, dateFormatter); } catch (DateTimeParseException ignored) { }
         }
-        throw new BusinessException(ErrorCode.TEMPLATE_INVALID, coordinate + " 日期格式不正确");
+        var month = MONTH.matcher(raw);
+        if (month.matches()) {
+            try {
+                return LocalDate.of(Integer.parseInt(month.group(1)), Integer.parseInt(month.group(2)), 1);
+            } catch (DateTimeException ignored) {
+                // Fall through to the same safe coordinate-only validation message.
+            }
+        }
+        throw new BusinessException(ErrorCode.TEMPLATE_INVALID, address.formatAsString() + " 日期格式不正确");
     }
 
     private static String parseDeclarationSigner(String raw) {

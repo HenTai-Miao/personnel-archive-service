@@ -10,13 +10,16 @@ import com.company.personnelarchive.family.AgeCalculator;
 import com.company.personnelarchive.person.IdentityProtection;
 import com.company.personnelarchive.person.PersonReadMapper;
 import org.apache.poi.ss.usermodel.ClientAnchor;
+import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.util.CellAddress;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.ss.util.SheetUtil;
 import org.apache.poi.util.Units;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFCell;
 import org.apache.poi.xssf.usermodel.XSSFPicture;
+import org.apache.poi.xssf.usermodel.XSSFRow;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
@@ -35,6 +38,11 @@ import java.util.List;
  * 固定标签、样式、合并和打印布局来自只读空模板，数据库只提供用户数据和照片。
  */
 public class ArchiveExportService {
+    private static final int MAIN_FAMILY_HEADER_ROW = 37;
+    private static final int MAIN_DECLARATION_STATEMENT_ROW = 44;
+    private static final int MAIN_DECLARATION_VALUE_ROW = 45;
+    private static final int HELPER_HEADER_ROW = 0;
+    private static final int HELPER_FIRST_FAMILY_ROW = 1;
     private final PersonReadMapper mapper;
     private final ArchiveProperties properties;
     private final IdentityProtection protection;
@@ -87,12 +95,13 @@ public class ArchiveExportService {
         List<PersonReadMapper.WorkRow> work = mapper.findWork(properties.tenantId(), personId);
         List<PersonReadMapper.RewardRow> rewards = mapper.findRewards(properties.tenantId(), personId);
         List<PersonReadMapper.FamilyRow> family = mapper.findFamily(properties.tenantId(), personId);
-        // V1 没有续页协议，超容量必须失败，不能静默丢失数据库中的行。
+        // 学历、经历和奖惩仍受 V1 固定区块限制；家庭区会在下方动态扩展。
         if (education.stream().filter(row -> "MAIN".equals(row.educationType())).count() > ExcelTemplateV1.MAIN_EDUCATION_CAPACITY
-            || work.size() > ExcelTemplateV1.WORK_EXPERIENCE_CAPACITY || rewards.size() > ExcelTemplateV1.REWARD_PUNISHMENT_CAPACITY
-            || family.size() > ExcelTemplateV1.FAMILY_MEMBER_CAPACITY) {
+            || work.size() > ExcelTemplateV1.WORK_EXPERIENCE_CAPACITY
+            || rewards.size() > ExcelTemplateV1.REWARD_PUNISHMENT_CAPACITY) {
             throw new BusinessException(ErrorCode.TEMPLATE_CAPACITY_EXCEEDED);
         }
+        int extraFamilyRows = expandFamilySections(workbook, family.size());
         set(sheet, "B2", p.employeeNo()); set(sheet, "B3", p.personName()); set(sheet, "D3", p.gender());
         setDate(sheet, "F3", p.birthDate()); set(sheet, "H3", p.nation()); set(sheet, "B4", p.nativePlace());
         set(sheet, "D4", p.birthPlace()); set(sheet, "F4", p.politicalStatus()); setDate(sheet, "H4", p.politicalJoinDate());
@@ -122,9 +131,81 @@ public class ArchiveExportService {
             set(helper, "B" + helperRow, member.relationshipName()); set(helper, "C" + helperRow, member.memberName());
             setDate(helper, "D" + helperRow, member.birthDate());
         }
-        set(sheet, "B46", declaration(p));
+        set(sheet, "B" + (MAIN_DECLARATION_VALUE_ROW + extraFamilyRows + 1), declaration(p));
         PersonReadMapper.PhotoRow photo = mapper.findPhoto(properties.tenantId(), personId);
         if (photo != null) insertPhoto(workbook, sheet, photo);
+    }
+
+    private static int expandFamilySections(XSSFWorkbook workbook, int familySize) {
+        int extraRows = Math.max(0, familySize - ExcelTemplateV1.BASE_FAMILY_ROWS);
+        if (extraRows == 0) return 0;
+
+        XSSFSheet main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
+        int[] originalBreaks = main.getRowBreaks();
+        main.shiftRows(MAIN_DECLARATION_STATEMENT_ROW, main.getLastRowNum(), extraRows, true, false);
+        for (int row = MAIN_DECLARATION_STATEMENT_ROW;
+             row < MAIN_DECLARATION_STATEMENT_ROW + extraRows; row++) {
+            cloneBlankRow(main, MAIN_DECLARATION_STATEMENT_ROW - 1, row, 8);
+            main.addMergedRegion(new CellRangeAddress(row, row, 5, 8));
+        }
+        replaceMergedRegion(main,
+            new CellRangeAddress(MAIN_FAMILY_HEADER_ROW,
+                MAIN_DECLARATION_STATEMENT_ROW - 1, 0, 0),
+            new CellRangeAddress(MAIN_FAMILY_HEADER_ROW,
+                MAIN_DECLARATION_STATEMENT_ROW - 1 + extraRows, 0, 0));
+        resetShiftedRowBreaks(main, originalBreaks, MAIN_DECLARATION_STATEMENT_ROW, extraRows);
+
+        XSSFSheet helper = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
+        for (int row = HELPER_FIRST_FAMILY_ROW + ExcelTemplateV1.BASE_FAMILY_ROWS;
+             row < HELPER_FIRST_FAMILY_ROW + ExcelTemplateV1.BASE_FAMILY_ROWS + extraRows; row++) {
+            cloneBlankRow(helper,
+                HELPER_FIRST_FAMILY_ROW + ExcelTemplateV1.BASE_FAMILY_ROWS - 1, row, 4);
+        }
+        replaceMergedRegion(helper,
+            new CellRangeAddress(HELPER_HEADER_ROW,
+                HELPER_FIRST_FAMILY_ROW + ExcelTemplateV1.BASE_FAMILY_ROWS - 1, 0, 0),
+            new CellRangeAddress(HELPER_HEADER_ROW,
+                HELPER_FIRST_FAMILY_ROW + ExcelTemplateV1.BASE_FAMILY_ROWS + extraRows - 1, 0, 0));
+        return extraRows;
+    }
+
+    private static void cloneBlankRow(XSSFSheet sheet, int sourceRowNumber, int targetRowNumber, int lastColumn) {
+        XSSFRow source = sheet.getRow(sourceRowNumber);
+        if (source == null) throw new BusinessException(ErrorCode.TEMPLATE_INVALID, "模板家庭成员样式行缺失");
+        XSSFRow target = sheet.getRow(targetRowNumber);
+        if (target == null) target = sheet.createRow(targetRowNumber);
+        target.setHeight(source.getHeight());
+        target.setZeroHeight(source.getZeroHeight());
+        if (source.getRowStyle() != null) target.setRowStyle(source.getRowStyle());
+        for (int column = 0; column <= lastColumn; column++) {
+            XSSFCell sourceCell = source.getCell(column);
+            XSSFCell targetCell = target.getCell(column);
+            if (targetCell == null) targetCell = target.createCell(column, CellType.BLANK);
+            else targetCell.setBlank();
+            if (sourceCell != null) targetCell.setCellStyle(sourceCell.getCellStyle());
+        }
+    }
+
+    private static void replaceMergedRegion(XSSFSheet sheet, CellRangeAddress expected,
+                                            CellRangeAddress replacement) {
+        int index = -1;
+        for (int candidate = 0; candidate < sheet.getNumMergedRegions(); candidate++) {
+            if (sheet.getMergedRegion(candidate).formatAsString().equals(expected.formatAsString())) {
+                index = candidate;
+                break;
+            }
+        }
+        if (index < 0) throw new BusinessException(ErrorCode.TEMPLATE_INVALID, "模板家庭成员合并区域缺失");
+        sheet.removeMergedRegion(index);
+        sheet.addMergedRegion(replacement);
+    }
+
+    private static void resetShiftedRowBreaks(XSSFSheet sheet, int[] originalBreaks,
+                                              int insertionRow, int extraRows) {
+        for (int rowBreak : sheet.getRowBreaks()) sheet.removeRowBreak(rowBreak);
+        for (int rowBreak : originalBreaks) {
+            sheet.setRowBreak(rowBreak >= insertionRow ? rowBreak + extraRows : rowBreak);
+        }
     }
 
     private static void writeSummary(XSSFSheet sheet, PersonReadMapper.EducationRow row, int firstRow) {

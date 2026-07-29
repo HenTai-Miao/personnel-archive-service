@@ -28,7 +28,6 @@ public record ArchiveDocument(
         capacity("主要学历", mainEducation, ExcelTemplateV1.MAIN_EDUCATION_CAPACITY);
         capacity("工作经历", workExperiences, ExcelTemplateV1.WORK_EXPERIENCE_CAPACITY);
         capacity("奖惩情况", rewardsPunishments, ExcelTemplateV1.REWARD_PUNISHMENT_CAPACITY);
-        capacity("家庭成员", familyMembers, ExcelTemplateV1.FAMILY_MEMBER_CAPACITY);
     }
 
     private static void capacity(String name, List<?> rows, int max) {

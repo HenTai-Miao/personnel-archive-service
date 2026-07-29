@@ -1,6 +1,7 @@
 /* Excel 导出测试：重开生成工作簿并核对字段、原始行、布局及照片还原。 */
 package com.company.personnelarchive.archiveexport;
 
+import com.company.personnelarchive.archiveimport.ArchiveDocument;
 import com.company.personnelarchive.archiveimport.ExcelArchiveReader;
 import com.company.personnelarchive.archiveimport.ExcelTemplateV1;
 import com.company.personnelarchive.audit.AuditService;
@@ -9,6 +10,7 @@ import com.company.personnelarchive.person.IdentityProtection;
 import com.company.personnelarchive.person.PersonReadMapper;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.ss.util.SheetUtil;
 import org.apache.poi.util.Units;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -126,5 +129,56 @@ class ArchiveExportServiceTest {
             assertThat(sheet.getRow(6).getCell(1).getCellType()).isEqualTo(CellType.BLANK);
         }
         verifyNoInteractions(protection);
+    }
+
+    @Test
+    void expandsTemplateForTenFamilyMembers() throws Exception {
+        ArchiveProperties properties = new ArchiveProperties(1,
+            new ArchiveProperties.Security(Duration.ofMinutes(15), Duration.ofDays(7), 1000,
+                "x".repeat(32), "h".repeat(32),
+                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+            new ArchiveProperties.Excel(12_582_912, 5_242_880, 500,
+                "classpath:/excel/personnel-archive-template-v1.xlsx"),
+            new ArchiveProperties.BootstrapAdmin("", "", "初始管理员"));
+        PersonReadMapper mapper = mock(PersonReadMapper.class);
+        IdentityProtection protection = mock(IdentityProtection.class);
+        AuditService audit = mock(AuditService.class);
+        PersonReadMapper.PersonRow person = new PersonReadMapper.PersonRow(7, "T-010", "测试十人", null, null,
+            null, null, null, null, null, null, null, null, null, null, null, null, "测试十人",
+            LocalDate.of(2026, 7, 22), "V1", 1, Instant.parse("2026-07-21T00:00:00Z"));
+        List<PersonReadMapper.FamilyRow> family = IntStream.rangeClosed(1, 10)
+            .mapToObj(index -> new PersonReadMapper.FamilyRow(index, "称谓" + index, "成员" + index,
+                index == 10 ? null : LocalDate.of(2000, 7, index), "群众", "单位" + index, null, index))
+            .toList();
+        when(mapper.findActive(1, 7)).thenReturn(person);
+        when(mapper.findEducation(1, 7)).thenReturn(List.of());
+        when(mapper.findWork(1, 7)).thenReturn(List.of());
+        when(mapper.findRewards(1, 7)).thenReturn(List.of());
+        when(mapper.findFamily(1, 7)).thenReturn(family);
+        Clock clock = Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneId.of("Asia/Shanghai"));
+        ArchiveExportService service = new ArchiveExportService(mapper, properties, protection,
+            new ExcelArchiveReader(properties), new DefaultResourceLoader(), clock, audit);
+
+        ArchiveExportService.GeneratedArchive generated = service.generate(7, 9);
+
+        try (var workbook = new XSSFWorkbook(new ByteArrayInputStream(generated.bytes()))) {
+            var main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
+            var helper = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
+            assertThat(main.getRow(38).getCell(1).getStringCellValue()).isEqualTo("称谓1");
+            assertThat(main.getRow(47).getCell(2).getStringCellValue()).isEqualTo("成员10");
+            assertThat(helper.getRow(1).getCell(1).getStringCellValue()).isEqualTo("称谓1");
+            assertThat(helper.getRow(10).getCell(2).getStringCellValue()).isEqualTo("成员10");
+            assertThat(helper.getRow(10).getCell(3).getCellType()).isEqualTo(CellType.BLANK);
+            assertThat(main.getMergedRegions().stream().map(CellRangeAddress::formatAsString))
+                .contains("A38:A48", "F48:I48", "A49:I49", "B50:I50");
+            assertThat(main.getRow(49).getCell(1).getStringCellValue())
+                .contains("承诺人：测试十人", "2026年7月22日");
+            assertThat(main.getRowBreaks()).containsExactly(60, 104);
+        }
+        ArchiveDocument reopened = new ExcelArchiveReader(properties).read(
+            new ByteArrayInputStream(generated.bytes()), generated.bytes().length, generated.filename());
+        assertThat(reopened.familyMembers()).hasSize(10);
+        assertThat(reopened.familyMembers().getLast().birthDate()).isNull();
+        assertThat(reopened.declarationSigner()).isEqualTo("测试十人");
     }
 }
