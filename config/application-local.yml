@@ -16,6 +16,6 @@ personnel-archive:
     identity-hmac-key: "e69da0e5e6b37c81fbc2aaa5c751cffdd48ea9f3e26547f4181b92040c9bddda"
     identity-encryption-key: "J/9XyOA/1bjVYmyTT7HPxVR5sduTr7QFbnAtK4TAZCY="
   bootstrap-admin:
-    username: admin
-    password: "be97c6aa024682fdfb04dda0"
-    display-name: 本地测试管理员
+    username: hr_6298bc833379
+    password: "4265f7e9cbc86d1787e81f3c"
+    display-name: 人资部门
