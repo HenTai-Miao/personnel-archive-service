@@ -14,9 +14,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ProductionProfileConfigurationTest {
     @Test
-    void keepsLocalDefaultAndUsesFiveDigitProductionPort() throws IOException {
+    void usesFiveDigitPortInEveryEnvironment() throws IOException {
         assertThat(resolvedServerPort(null, "src/main/resources/application.yml"))
-            .isEqualTo("8080");
+            .isEqualTo("18080");
+        assertThat(resolvedServerPort(null, "config/application-local.yml"))
+            .isEqualTo("18080");
         assertThat(resolvedServerPort(null,
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))

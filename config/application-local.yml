@@ -8,7 +8,7 @@ spring:
     password: "8b1b9f9108900ea9a4f59b55f928ec5c"
 
 server:
-  port: 8080
+  port: 18080
 
 personnel-archive:
   security:
