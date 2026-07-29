@@ -1,5 +1,7 @@
 # Production Endpoint Environment Implementation Plan
 
+> **Superseded port assumption:** This plan records the first production-only port change. The later `2026-07-29-unified-backend-port-implementation.md` is authoritative and moves base, local, and production traffic to `18080`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an explicit `prod` mode whose Java service listens on port `18080` and whose packaged Electron client calls `http://10.141.29.96:18080/api/v1`, while leaving local development on `127.0.0.1:8080`.

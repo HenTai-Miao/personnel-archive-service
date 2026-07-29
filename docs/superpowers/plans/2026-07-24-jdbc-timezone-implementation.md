@@ -261,7 +261,7 @@ Stop the existing Spring Boot process cleanly, then run:
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-Expected: Flyway reports the schema up to date and the API listens on port `8080` without a datasource timezone error.
+Expected: Flyway reports the schema up to date and the API listens on port `18080` without a datasource timezone error.
 
 - [ ] **Step 4: Verify the observable desktop result**
 
