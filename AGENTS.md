@@ -81,7 +81,7 @@ Establish Maven Wrapper commands; the minimum completion command is:
 
 Real-MySQL Testcontainers suites use `disabledWithoutDocker = true`: they run whenever Docker is reachable and are reported as skipped otherwise. A sandbox skip is not evidence that a migration or end-to-end database flow passed; release verification must run them with Docker available.
 
-For macOS manual testing, the root `../启动本地测试.command` starts Docker Desktop and the existing local MySQL container, runs this service with the `local` profile, waits for `/api/v1`, and verifies the configured bootstrap-admin login before opening the client. It must never create, reset, or delete the user's database volume.
+For macOS manual testing, the root `../启动本地测试.command` uses an already available MySQL service or safely starts the existing `local-mysql` container, runs this service with the `local` profile, waits for `/api/v1`, and opens the canonical `personnel-archive-desktop-b` client. It must never create, reset, or delete the user's database volume.
 
 Cover exact-label layout resolution, historical row shifts, optional/partially filled fields, evidence-based family birth-date association, month/date calculation, duplicate precheck, default skip, overwrite history, reasoned soft deletion, persistent import-history pagination, repeated overwrites/deletes, active-only uniqueness/querying, stale/concurrent decisions, rollback, fuzzy search, authorization, identity/phone masking and explicit reveal, audit redaction, dynamic-family lossless export, and photo insertion. Every schema change includes a Flyway migration and MySQL integration test; every API change updates OpenAPI and client types.
 
