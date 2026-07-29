@@ -8,7 +8,6 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
-import java.time.LocalDate;
 import java.util.List;
 
 @Mapper
@@ -25,13 +24,15 @@ public interface PersonMapper {
     @Insert("""
         INSERT INTO pa_person
         (tenant_id,employee_no,person_name,normalized_name,id_card_ciphertext,id_card_hmac,id_card_last_four,
-         gender,birth_date,nation,native_place,birth_place,political_status,political_join_date,marital_status,
-         health_status,mailing_address,postal_code,phone_number,declaration_signer,declaration_date,template_version,
+         gender,birth_date,nation,native_place,birth_place,political_status,political_join_date,
+         marital_status,health_status,mailing_address,postal_code,phone_number,
+         declaration_signer,declaration_date,template_version,
          snapshot_version,previous_person_id,created_by,updated_by)
         VALUES
         (#{tenantId},#{employeeNo},#{personName},#{normalizedName},#{idCardCiphertext},#{idCardHmac},#{idCardLastFour},
-         #{gender},#{birthDate},#{nation},#{nativePlace},#{birthPlace},#{politicalStatus},#{politicalJoinDate},#{maritalStatus},
-         #{healthStatus},#{mailingAddress},#{postalCode},#{phoneNumber},#{declarationSigner},#{declarationDate},#{templateVersion},
+         #{gender},#{birthDate},#{nation},#{nativePlace},#{birthPlace},#{politicalStatus},
+         #{politicalJoinDate},#{maritalStatus},#{healthStatus},#{mailingAddress},#{postalCode},
+         #{phoneNumber},#{declarationSigner},#{declarationDate},#{templateVersion},
          #{snapshotVersion},#{previousPersonId},#{operatorId},#{operatorId})
         """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
@@ -57,32 +58,34 @@ public interface PersonMapper {
     @Insert("INSERT INTO pa_employment (tenant_id,person_id,organization_name,department_name,work_start_date,dispatched_to_bidding_company_date,position_name,professional_title_or_skill,title_or_skill_acquired_date) VALUES (#{tenantId},#{personId},#{organization},#{department},#{workStartDate},#{dispatchDate},#{position},#{titleSkill},#{titleDate})")
     int insertEmployment(@Param("tenantId") long tenantId, @Param("personId") long personId,
                          @Param("organization") String organization, @Param("department") String department,
-                         @Param("workStartDate") LocalDate workStartDate, @Param("dispatchDate") LocalDate dispatchDate,
+                         @Param("workStartDate") String workStartDate,
+                         @Param("dispatchDate") String dispatchDate,
                          @Param("position") String position, @Param("titleSkill") String titleSkill,
-                         @Param("titleDate") LocalDate titleDate);
+                         @Param("titleDate") String titleDate);
 
     @Insert("INSERT INTO pa_education (tenant_id,person_id,education_type,institution_name,department_and_major,education_level,degree_name,start_date,end_date,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{type},#{institution},#{major},#{level},#{degree},#{startDate},#{endDate},#{rawText},#{sortOrder})")
     int insertEducation(@Param("tenantId") long tenantId, @Param("personId") long personId, @Param("type") String type,
                         @Param("institution") String institution, @Param("major") String major,
                         @Param("level") String level, @Param("degree") String degree,
-                        @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate,
+                        @Param("startDate") String startDate, @Param("endDate") String endDate,
                         @Param("rawText") String rawText, @Param("sortOrder") int sortOrder);
 
     @Insert("INSERT INTO pa_work_experience (tenant_id,person_id,start_date,end_date,organization_and_position,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{startDate},#{endDate},#{organizationAndPosition},#{rawText},#{sortOrder})")
     int insertWork(@Param("tenantId") long tenantId, @Param("personId") long personId,
-                   @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate,
+                   @Param("startDate") String startDate, @Param("endDate") String endDate,
                    @Param("organizationAndPosition") String organizationAndPosition,
                    @Param("rawText") String rawText, @Param("sortOrder") int sortOrder);
 
     @Insert("INSERT INTO pa_reward_punishment (tenant_id,person_id,occurred_date,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{occurredDate},#{rawText},#{sortOrder})")
     int insertReward(@Param("tenantId") long tenantId, @Param("personId") long personId,
-                     @Param("occurredDate") LocalDate occurredDate,
+                     @Param("occurredDate") String occurredDate,
                      @Param("rawText") String rawText, @Param("sortOrder") int sortOrder);
 
-    @Insert("INSERT INTO pa_family_member (tenant_id,person_id,relationship_name,member_name,normalized_member_name,birth_date,political_status,organization_and_position,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{relationship},#{name},#{normalizedName},#{birthDate},#{politicalStatus},#{workplace},#{rawText},#{sortOrder})")
+    @Insert("INSERT INTO pa_family_member (tenant_id,person_id,relationship_name,member_name,normalized_member_name,birth_date,age_text,political_status,organization_and_position,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{relationship},#{name},#{normalizedName},#{birthDate},#{ageText},#{politicalStatus},#{workplace},#{rawText},#{sortOrder})")
     int insertFamily(@Param("tenantId") long tenantId, @Param("personId") long personId,
                      @Param("relationship") String relationship, @Param("name") String name,
-                     @Param("normalizedName") String normalizedName, @Param("birthDate") LocalDate birthDate,
+                     @Param("normalizedName") String normalizedName, @Param("birthDate") String birthDate,
+                     @Param("ageText") String ageText,
                      @Param("politicalStatus") String politicalStatus, @Param("workplace") String workplace,
                      @Param("rawText") String rawText, @Param("sortOrder") int sortOrder);
 
@@ -110,19 +113,19 @@ public interface PersonMapper {
         public byte[] idCardHmac;
         public String idCardLastFour;
         public String gender;
-        public LocalDate birthDate;
+        public String birthDate;
         public String nation;
         public String nativePlace;
         public String birthPlace;
         public String politicalStatus;
-        public LocalDate politicalJoinDate;
+        public String politicalJoinDate;
         public String maritalStatus;
         public String healthStatus;
         public String mailingAddress;
         public String postalCode;
         public String phoneNumber;
         public String declarationSigner;
-        public LocalDate declarationDate;
+        public String declarationDate;
         public String templateVersion;
         public long snapshotVersion;
         public Long previousPersonId;

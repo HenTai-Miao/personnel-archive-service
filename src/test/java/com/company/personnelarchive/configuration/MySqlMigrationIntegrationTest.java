@@ -66,5 +66,36 @@ class MySqlMigrationIntegrationTest {
         jdbc.update(optionalInsert, userId, userId);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pa_person WHERE employee_no='' AND is_deleted=0", Integer.class))
             .isEqualTo(2);
+
+        assertThat(jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_schema='personnel_archive' AND data_type='varchar'
+              AND ((table_name='pa_person' AND column_name IN
+                    ('birth_date','political_join_date','declaration_date'))
+                OR (table_name='pa_employment' AND column_name IN
+                    ('work_start_date','dispatched_to_bidding_company_date','title_or_skill_acquired_date'))
+                OR (table_name='pa_education' AND column_name IN ('start_date','end_date'))
+                OR (table_name='pa_work_experience' AND column_name IN ('start_date','end_date'))
+                OR (table_name='pa_reward_punishment' AND column_name='occurred_date')
+                OR (table_name='pa_family_member' AND column_name='birth_date'))
+            """, Integer.class)).isEqualTo(12);
+        assertThat(jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_schema='personnel_archive' AND column_name LIKE '%\\_date\\_text'
+            """, Integer.class)).isZero();
+        jdbc.update("UPDATE pa_person SET birth_date='1988' WHERE id=?", activePersonId);
+        jdbc.update("""
+            UPDATE pa_family_member
+            SET birth_date='1990.02',age_text='36'
+            WHERE person_id=?
+            """, activePersonId);
+        assertThat(jdbc.queryForMap("SELECT birth_date FROM pa_person WHERE id=?", activePersonId))
+            .containsEntry("birth_date", "1988");
+        assertThat(jdbc.queryForMap(
+            "SELECT birth_date,age_text FROM pa_family_member WHERE person_id=?", activePersonId))
+            .containsEntry("birth_date", "1990.02")
+            .containsEntry("age_text", "36");
     }
 }

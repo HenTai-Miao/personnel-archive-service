@@ -47,27 +47,29 @@ class ApiContractSerializationTest {
         var educationSummary = new PersonDtos.EducationSummary("全日制大学", "档案学", "本科", "学士");
         var detail = new PersonDtos.Detail(
             "7", "E-1", "测试甲", "1234***********012",
-            new PersonDtos.PersonalInfo("女", "2000-01-01", "汉族", "湖南", "长沙", "中共党员",
-                "2021-07-01", "已婚", "健康", "测试地址", "410000", "0000*002"),
-            new PersonDtos.EmploymentDetails("测试单位", "测试部门", "2020-01-01", "2021-01-01",
-                "测试职务", "测试技能", "2022-01-01"),
+            new PersonDtos.PersonalInfo("女", "2000.01", "汉族", "湖南", "长沙", "中共党员",
+                "2021.07", "已婚", "健康", "测试地址", "410000", "0000*002"),
+            new PersonDtos.EmploymentDetails("测试单位", "测试部门", "2020.01", "2021.01",
+                "测试职务", "测试技能", "2022.01"),
             new PersonDtos.EducationDetails(educationSummary, new PersonDtos.EducationSummary("", "", "", "")),
             List.of(new PersonDtos.OrderedText(1, "2020.09-2024.06", "示例大学")),
             List.of(new PersonDtos.OrderedText(1, "2024.07-至今", "测试单位")),
             List.of(new PersonDtos.OrderedText(1, "2025.01", "测试奖励")),
-            List.of(new PersonDtos.FamilyMember("测试乙", "子女", "2000-07-23", 25, "群众", "测试单位")),
-            new PersonDtos.DeclarationInfo("测试甲", "2026-07-22"),
+            List.of(new PersonDtos.FamilyMember("测试乙", "子女", "2000-07-23", "36", "群众", "测试单位")),
+            new PersonDtos.DeclarationInfo("测试甲", "2026年7月22日"),
             new PersonDtos.PhotoMetadata("image/png", "fixture.png", 128, 3, 4),
             new PersonDtos.ArchiveMetadata("V1", 2, "2026-07-22T03:00:00Z"));
         assertThat(mapper.readTree(mapper.writeValueAsBytes(auth))).hasSize(4);
         var json = mapper.readTree(mapper.writeValueAsBytes(detail));
         assertThat(json.at("/personal/gender").asText()).isEqualTo("女");
-        assertThat(json.at("/employment/workStartDate").asText()).isEqualTo("2020-01-01");
+        assertThat(json.at("/personal/birthDate").asText()).isEqualTo("2000.01");
+        assertThat(json.at("/employment/workStartDate").asText()).isEqualTo("2020.01");
         assertThat(json.at("/education/fullTime/institutionName").asText()).isEqualTo("全日制大学");
         assertThat(json.at("/mainEducation/0/rightText").asText()).isEqualTo("示例大学");
         assertThat(json.at("/workExperiences/0/rightText").asText()).isEqualTo("测试单位");
         assertThat(json.at("/rewardsPunishments/0/rightText").asText()).isEqualTo("测试奖励");
         assertThat(json.at("/familyMembers/0/politicalStatus").asText()).isEqualTo("群众");
+        assertThat(json.at("/familyMembers/0/age").asText()).isEqualTo("36");
         assertThat(json.at("/declaration/signer").asText()).isEqualTo("测试甲");
         assertThat(json.at("/photo/mimeType").asText()).isEqualTo("image/png");
         assertThat(json.at("/personal/phoneNumberMasked").asText()).isEqualTo("0000*002");

@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: 人员档案数据服务 API
-  version: 1.6.0
-  description: 业务日期使用 yyyy-MM-dd；时间戳是从 Asia/Shanghai 数据库时间映射得到的 UTC ISO-8601 时间点。V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
+  version: 1.8.0
+  description: 业务日期和字面家庭年龄使用 Excel 来源可见文本，不补日；模板精确 DATEDIF/TODAY 年龄公式仅在导入时冻结 Excel 当前显示值，查询、展示和导出不重算。时间戳是从 Asia/Shanghai 数据库时间映射得到的 UTC ISO-8601 时间点。V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
 servers:
   - url: /api/v1
 security:
@@ -445,12 +445,12 @@ components:
       required: [gender, birthDate, nation, nativePlace, birthPlace, politicalStatus, politicalJoinDate, maritalStatus, healthStatus, mailingAddress, postalCode, phoneNumberMasked]
       properties:
         gender: { type: string }
-        birthDate: { type: string }
+        birthDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
         nation: { type: string }
         nativePlace: { type: string }
         birthPlace: { type: string }
         politicalStatus: { type: string }
-        politicalJoinDate: { type: string }
+        politicalJoinDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
         maritalStatus: { type: string }
         healthStatus: { type: string }
         mailingAddress: { type: string }
@@ -471,11 +471,11 @@ components:
       properties:
         organization: { type: string }
         department: { type: string }
-        workStartDate: { type: string }
-        dispatchedToBiddingCompanyDate: { type: string }
+        workStartDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
+        dispatchedToBiddingCompanyDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
         position: { type: string }
         titleOrSkill: { type: string }
-        titleOrSkillAcquiredDate: { type: string }
+        titleOrSkillAcquiredDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
     EducationSummary:
       type: object
       additionalProperties: false
@@ -507,11 +507,8 @@ components:
       properties:
         name: { type: string }
         relationship: { type: string }
-        birthDate: { type: string }
-        age:
-          oneOf:
-            - { type: integer, minimum: 0 }
-            - { type: 'null' }
+        birthDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
+        age: { type: string, description: 家庭年龄字符串；字面值原样保存，模板精确 DATEDIF/TODAY 公式在导入时冻结 Excel 当前显示值，查询、展示和导出不重算。 }
         politicalStatus: { type: string }
         organizationAndPosition: { type: string }
     DeclarationInfo:
@@ -520,7 +517,7 @@ components:
       required: [signer, date]
       properties:
         signer: { type: string }
-        date: { type: string }
+        date: { type: string, description: Excel 声明区中的来源日期文本；年、年月、年月日均按原精度返回。 }
     PhotoMetadata:
       type: object
       additionalProperties: false

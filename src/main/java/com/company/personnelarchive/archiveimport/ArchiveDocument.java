@@ -1,24 +1,40 @@
 /* 导入领域文档：承载从工作簿读取的完整数据，并在写库前执行模板容量校验。 */
 package com.company.personnelarchive.archiveimport;
 
-import java.time.LocalDate;
 import java.util.List;
 
 public record ArchiveDocument(
-    String employeeNo, String name, String identityCard, String gender, LocalDate birthDate,
-    String ethnicity, String nativePlace, String birthPlace, String politicalStatus, LocalDate politicalJoinDate,
+    String employeeNo, String name, String identityCard, String gender, SourceDate birthDate,
+    String ethnicity, String nativePlace, String birthPlace, String politicalStatus, SourceDate politicalJoinDate,
     String maritalStatus, String healthStatus, String address, String postalCode, String phone,
     Employment employment, EducationSummary fullTimeEducation, EducationSummary inServiceEducation,
     List<OrderedText> mainEducation, List<OrderedText> workExperiences, List<OrderedText> rewardsPunishments,
-    List<FamilyMember> familyMembers, Photo photo, String declarationSigner, LocalDate declarationDate
+    List<FamilyMember> familyMembers, Photo photo, String declarationSigner, SourceDate declarationDate
 ) {
-    public record Employment(String organizationDepartment, LocalDate workStartDate, LocalDate dispatchDate,
-                             String position, String titleSkill, LocalDate titleObtainedDate) {}
+    public ArchiveDocument {
+        birthDate = birthDate == null ? SourceDate.empty() : birthDate;
+        politicalJoinDate = politicalJoinDate == null ? SourceDate.empty() : politicalJoinDate;
+        declarationDate = declarationDate == null ? SourceDate.empty() : declarationDate;
+    }
+
+    public record Employment(String organizationDepartment, SourceDate workStartDate, SourceDate dispatchDate,
+                             String position, String titleSkill, SourceDate titleObtainedDate) {
+        public Employment {
+            workStartDate = workStartDate == null ? SourceDate.empty() : workStartDate;
+            dispatchDate = dispatchDate == null ? SourceDate.empty() : dispatchDate;
+            titleObtainedDate = titleObtainedDate == null ? SourceDate.empty() : titleObtainedDate;
+        }
+    }
     public record EducationSummary(String school, String education, String major, String degree) {}
     public record OrderedText(int sortOrder, String leftText, String rightText, String rawText,
-                              LocalDate startDate, LocalDate endDate) {}
-    public record FamilyMember(int sortOrder, String relationship, String name, LocalDate birthDate,
-                               String politicalStatus, String workplacePosition) {}
+                              String startDate, String endDate) {}
+    public record FamilyMember(int sortOrder, String relationship, String name, SourceDate birthDate,
+                               String ageText, String politicalStatus, String workplacePosition) {
+        public FamilyMember {
+            birthDate = birthDate == null ? SourceDate.empty() : birthDate;
+            ageText = ageText == null ? "" : ageText;
+        }
+    }
     public record Photo(byte[] bytes, String mimeType, String originalFilename, int width, int height,
                         PhotoAnchor anchor) {}
     public record PhotoAnchor(int col1, int row1, int dx1, int dy1, int col2, int row2, int dx2, int dy2,

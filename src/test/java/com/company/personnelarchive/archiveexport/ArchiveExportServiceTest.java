@@ -10,6 +10,7 @@ import com.company.personnelarchive.person.IdentityProtection;
 import com.company.personnelarchive.person.PersonReadMapper;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.ss.util.SheetUtil;
 import org.apache.poi.util.Units;
@@ -20,12 +21,10 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,6 +33,53 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ArchiveExportServiceTest {
+    @Test
+    void preservesSourceDateAndFamilyAges() throws Exception {
+        ArchiveProperties properties = new ArchiveProperties(1,
+            new ArchiveProperties.Security(Duration.ofMinutes(15), Duration.ofDays(7), 1000,
+                "x".repeat(32), "h".repeat(32),
+                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+            new ArchiveProperties.Excel(12_582_912, 5_242_880, 500,
+                "classpath:/excel/personnel-archive-template-v1.xlsx"),
+            new ArchiveProperties.BootstrapAdmin("", "", "初始管理员"));
+        PersonReadMapper mapper = mock(PersonReadMapper.class);
+        IdentityProtection protection = mock(IdentityProtection.class);
+        AuditService audit = mock(AuditService.class);
+        PersonReadMapper.PersonRow person = new PersonReadMapper.PersonRow(
+            7, "T-001", "测试甲", null, null, "女", "1980", "汉族", "测试籍贯",
+            "测试出生地", "群众", "2002.10", "已婚", "健康", "测试地址", "000000",
+            "00000000", "测试甲", "2026年7月22日", "V1", 1,
+            Instant.parse("2026-07-21T00:00:00Z"));
+        List<String> ages = List.of("36", "11", "62", "63", "59", "57");
+        List<PersonReadMapper.FamilyRow> family = IntStream.range(0, ages.size())
+            .mapToObj(index -> new PersonReadMapper.FamilyRow(index + 1L, "称谓" + index, "成员" + index,
+                index == 0 ? "1990.02" : "", ages.get(index), "群众", "测试单位", "", index + 1))
+            .toList();
+        when(mapper.findActive(1, 7)).thenReturn(person);
+        when(mapper.findEducation(1, 7)).thenReturn(List.of());
+        when(mapper.findWork(1, 7)).thenReturn(List.of());
+        when(mapper.findRewards(1, 7)).thenReturn(List.of());
+        when(mapper.findFamily(1, 7)).thenReturn(family);
+        ArchiveExportService service = new ArchiveExportService(mapper, properties, protection,
+            new ExcelArchiveReader(properties), new DefaultResourceLoader(), audit);
+
+        ArchiveExportService.GeneratedArchive generated = service.generate(7, 9);
+
+        try (var workbook = new XSSFWorkbook(new ByteArrayInputStream(generated.bytes()))) {
+            DataFormatter formatter = new DataFormatter(Locale.CHINA);
+            var main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
+            var helper = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
+            assertThat(formatter.formatCellValue(main.getRow(2).getCell(5))).isEqualTo("1980");
+            assertThat(formatter.formatCellValue(main.getRow(3).getCell(7))).isEqualTo("2002.10");
+            assertThat(formatter.formatCellValue(main.getRow(45).getCell(1)))
+                .contains("2026年7月22日");
+            assertThat(formatter.formatCellValue(helper.getRow(1).getCell(3))).isEqualTo("1990.02");
+            assertThat(IntStream.range(0, ages.size())
+                .mapToObj(index -> formatter.formatCellValue(main.getRow(38 + index).getCell(3)))
+                .toList()).containsExactlyElementsOf(ages);
+        }
+    }
+
     @Test
     void rebuildsWorkbookAndKeepsPrintLayout() throws Exception {
         ArchiveProperties properties = new ArchiveProperties(1,
@@ -44,10 +90,9 @@ class ArchiveExportServiceTest {
         PersonReadMapper mapper = mock(PersonReadMapper.class);
         IdentityProtection protection = mock(IdentityProtection.class);
         AuditService audit = mock(AuditService.class);
-        Clock clock = Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneId.of("Asia/Shanghai"));
         PersonReadMapper.PersonRow person = new PersonReadMapper.PersonRow(7, "T-001", "测试甲", new byte[]{1}, "0012",
-            "女", LocalDate.of(2000, 1, 1), "测试民族", "测试籍贯", "测试出生地", "测试面貌", null,
-            "未填写", "良好", "测试地址", "000000", "00000000", "测试甲", LocalDate.of(2026, 7, 22),
+            "女", "2000-01-01", "测试民族", "测试籍贯", "测试出生地", "测试面貌", null,
+            "未填写", "良好", "测试地址", "000000", "00000000", "测试甲", "2026-07-22",
             "V1", 1, Instant.parse("2026-07-21T00:00:00Z"));
         when(mapper.findActive(1, 7)).thenReturn(person);
         when(mapper.findEmployment(1, 7)).thenReturn(new PersonReadMapper.EmploymentRow("测试单位", "测试部门", null, null, "测试职务", "测试技能", null));
@@ -55,11 +100,11 @@ class ArchiveExportServiceTest {
         when(mapper.findWork(1, 7)).thenReturn(List.of(new PersonReadMapper.WorkRow(null, null, null, "测试时段\t测试工作", 1)));
         when(mapper.findRewards(1, 7)).thenReturn(List.of());
         when(mapper.findFamily(1, 7)).thenReturn(List.of(new PersonReadMapper.FamilyRow(8, "测试称谓", "测试乙",
-            LocalDate.of(2000, 7, 23), "测试面貌", "测试单位及职务", null, 1)));
+            "2000-07-23", "25", "测试面貌", "测试单位及职务", null, 1)));
         when(protection.decrypt(person.idCardCiphertext())).thenReturn("990000200001010012");
         ExcelArchiveReader validator = new ExcelArchiveReader(properties);
         ArchiveExportService service = new ArchiveExportService(mapper, properties, protection, validator,
-            new DefaultResourceLoader(), clock, audit);
+            new DefaultResourceLoader(), audit);
 
         ArchiveExportService.GeneratedArchive generated = service.generate(7, 9);
 
@@ -71,9 +116,10 @@ class ArchiveExportServiceTest {
             assertThat(main.getRow(6).getCell(1).getCellStyle().getDataFormatString()).isEqualTo("@");
             assertThat(main.getRow(11).getCell(5).getCellStyle().getDataFormatString()).isEqualTo("@");
             assertThat(main.getRow(11).getCell(7).getCellStyle().getDataFormatString()).isEqualTo("@");
-            assertThat(main.getRow(38).getCell(3).getNumericCellValue()).isEqualTo(25);
-            assertThat(workbook.getSheet(ExcelTemplateV1.AGE_SHEET).getRow(1).getCell(3)
-                .getLocalDateTimeCellValue().toLocalDate()).isEqualTo(LocalDate.of(2000, 7, 23));
+            DataFormatter formatter = new DataFormatter(Locale.CHINA);
+            assertThat(formatter.formatCellValue(main.getRow(38).getCell(3))).isEqualTo("25");
+            assertThat(formatter.formatCellValue(
+                workbook.getSheet(ExcelTemplateV1.AGE_SHEET).getRow(1).getCell(3))).isEqualTo("2000-07-23");
             assertThat(workbook.getSheet(ExcelTemplateV1.AGE_SHEET).getRow(1).getCell(4).getCellType())
                 .as("导出不应在原表空白的辅助列中新增年龄值")
                 .isEqualTo(CellType.BLANK);
@@ -104,9 +150,8 @@ class ArchiveExportServiceTest {
         when(mapper.findRewards(1, 7)).thenReturn(List.of());
         when(mapper.findFamily(1, 7)).thenReturn(List.of());
         when(mapper.findPhoto(1, 7)).thenReturn(photo);
-        Clock clock = Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneId.of("Asia/Shanghai"));
         ArchiveExportService service = new ArchiveExportService(mapper, properties, protection,
-            new ExcelArchiveReader(properties), new DefaultResourceLoader(), clock, audit);
+            new ExcelArchiveReader(properties), new DefaultResourceLoader(), audit);
 
         ArchiveExportService.GeneratedArchive generated = service.generate(7, 9);
 
@@ -145,19 +190,19 @@ class ArchiveExportServiceTest {
         AuditService audit = mock(AuditService.class);
         PersonReadMapper.PersonRow person = new PersonReadMapper.PersonRow(7, "T-010", "测试十人", null, null,
             null, null, null, null, null, null, null, null, null, null, null, null, "测试十人",
-            LocalDate.of(2026, 7, 22), "V1", 1, Instant.parse("2026-07-21T00:00:00Z"));
+            "2026年7月22日", "V1", 1, Instant.parse("2026-07-21T00:00:00Z"));
         List<PersonReadMapper.FamilyRow> family = IntStream.rangeClosed(1, 10)
             .mapToObj(index -> new PersonReadMapper.FamilyRow(index, "称谓" + index, "成员" + index,
-                index == 10 ? null : LocalDate.of(2000, 7, index), "群众", "单位" + index, null, index))
+                index == 10 ? null : "2000-07-" + String.format("%02d", index), "", "群众",
+                "单位" + index, null, index))
             .toList();
         when(mapper.findActive(1, 7)).thenReturn(person);
         when(mapper.findEducation(1, 7)).thenReturn(List.of());
         when(mapper.findWork(1, 7)).thenReturn(List.of());
         when(mapper.findRewards(1, 7)).thenReturn(List.of());
         when(mapper.findFamily(1, 7)).thenReturn(family);
-        Clock clock = Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneId.of("Asia/Shanghai"));
         ArchiveExportService service = new ArchiveExportService(mapper, properties, protection,
-            new ExcelArchiveReader(properties), new DefaultResourceLoader(), clock, audit);
+            new ExcelArchiveReader(properties), new DefaultResourceLoader(), audit);
 
         ArchiveExportService.GeneratedArchive generated = service.generate(7, 9);
 
@@ -178,7 +223,8 @@ class ArchiveExportServiceTest {
         ArchiveDocument reopened = new ExcelArchiveReader(properties).read(
             new ByteArrayInputStream(generated.bytes()), generated.bytes().length, generated.filename());
         assertThat(reopened.familyMembers()).hasSize(10);
-        assertThat(reopened.familyMembers().getLast().birthDate()).isNull();
+        assertThat(reopened.familyMembers().getLast().birthDate().text()).isEmpty();
+        assertThat(reopened.familyMembers().getLast().birthDate().exactDate()).isNull();
         assertThat(reopened.declarationSigner()).isEqualTo("测试十人");
     }
 }

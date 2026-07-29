@@ -1,5 +1,7 @@
 # JDBC Timezone Fix Implementation Plan
 
+> Historical scope note: business-date `DATE`/`LocalDate` statements were superseded by the 2026-07-29 source-value fidelity work and Flyway V7. The `DATETIME(6)` timestamp mapping rules in this plan remain current.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Correct the eight-hour archive timestamp offset by interpreting existing MySQL `DATETIME(6)` values as `Asia/Shanghai` wall-clock time.

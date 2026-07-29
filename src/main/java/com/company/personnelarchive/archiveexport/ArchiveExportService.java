@@ -6,7 +6,6 @@ import com.company.personnelarchive.audit.AuditService;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
 import com.company.personnelarchive.configuration.ArchiveProperties;
-import com.company.personnelarchive.family.AgeCalculator;
 import com.company.personnelarchive.person.IdentityProtection;
 import com.company.personnelarchive.person.PersonReadMapper;
 import org.apache.poi.ss.usermodel.ClientAnchor;
@@ -27,8 +26,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.time.Clock;
-import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
 
@@ -48,14 +45,13 @@ public class ArchiveExportService {
     private final IdentityProtection protection;
     private final ExcelArchiveReader templateValidator;
     private final ResourceLoader resourceLoader;
-    private final Clock clock;
     private final AuditService audit;
 
     public ArchiveExportService(PersonReadMapper mapper, ArchiveProperties properties, IdentityProtection protection,
-                                ExcelArchiveReader templateValidator, ResourceLoader resourceLoader, Clock clock,
+                                ExcelArchiveReader templateValidator, ResourceLoader resourceLoader,
                                 AuditService audit) {
         this.mapper = mapper; this.properties = properties; this.protection = protection;
-        this.templateValidator = templateValidator; this.resourceLoader = resourceLoader; this.clock = clock; this.audit = audit;
+        this.templateValidator = templateValidator; this.resourceLoader = resourceLoader; this.audit = audit;
     }
 
     public GeneratedArchive generate(long personId, long operatorId) {
@@ -103,12 +99,16 @@ public class ArchiveExportService {
         }
         int extraFamilyRows = expandFamilySections(workbook, family.size());
         set(sheet, "B2", p.employeeNo()); set(sheet, "B3", p.personName()); set(sheet, "D3", p.gender());
-        setDate(sheet, "F3", p.birthDate()); set(sheet, "H3", p.nation()); set(sheet, "B4", p.nativePlace());
-        set(sheet, "D4", p.birthPlace()); set(sheet, "F4", p.politicalStatus()); setDate(sheet, "H4", p.politicalJoinDate());
+        set(sheet, "F3", p.birthDate()); set(sheet, "H3", p.nation());
+        set(sheet, "B4", p.nativePlace()); set(sheet, "D4", p.birthPlace());
+        set(sheet, "F4", p.politicalStatus());
+        set(sheet, "H4", p.politicalJoinDate());
         if (employment != null) {
-            set(sheet, "B5", joinOrganization(employment)); setDate(sheet, "F5", employment.workStartDate());
-            setDate(sheet, "H5", employment.dispatchedToBiddingCompanyDate()); set(sheet, "B6", employment.positionName());
-            set(sheet, "F6", employment.professionalTitleOrSkill()); setDate(sheet, "H6", employment.titleOrSkillAcquiredDate());
+            set(sheet, "B5", joinOrganization(employment));
+            set(sheet, "F5", employment.workStartDate());
+            set(sheet, "H5", employment.dispatchedToBiddingCompanyDate());
+            set(sheet, "B6", employment.positionName()); set(sheet, "F6", employment.professionalTitleOrSkill());
+            set(sheet, "H6", employment.titleOrSkillAcquiredDate());
         }
         // 身份证全文只为生成授权档案临时解密；未填写时按原工作簿保持空白。
         set(sheet, "B7", p.idCardCiphertext() == null ? "" : protection.decrypt(p.idCardCiphertext()));
@@ -124,12 +124,12 @@ public class ArchiveExportService {
         for (PersonReadMapper.FamilyRow member : family) {
             int mainRow = 38 + member.sortOrder();
             set(sheet, "B" + mainRow, member.relationshipName()); set(sheet, "C" + mainRow, member.memberName());
-            // 年龄是导出当天的派生值，权威数据仍是辅助表中的出生日期。
-            if (member.birthDate() != null) setNumber(sheet, "D" + mainRow, AgeCalculator.completedYears(member.birthDate(), clock));
+            // 年龄和出生日期均以导入时的可见来源值为准，不能随导出日期变化。
+            set(sheet, "D" + mainRow, member.ageText());
             set(sheet, "E" + mainRow, member.politicalStatus()); set(sheet, "F" + mainRow, member.organizationAndPosition());
             int helperRow = 1 + member.sortOrder();
             set(helper, "B" + helperRow, member.relationshipName()); set(helper, "C" + helperRow, member.memberName());
-            setDate(helper, "D" + helperRow, member.birthDate());
+            set(helper, "D" + helperRow, member.birthDate());
         }
         set(sheet, "B" + (MAIN_DECLARATION_VALUE_ROW + extraFamilyRows + 1), declaration(p));
         PersonReadMapper.PhotoRow photo = mapper.findPhoto(properties.tenantId(), personId);
@@ -262,21 +262,6 @@ public class ArchiveExportService {
         if (value == null || value.isEmpty()) cell.setBlank();
         else cell.setCellValue(value);
     }
-    private static void setDate(XSSFSheet sheet, String coordinate, LocalDate value) {
-        XSSFCell cell = cell(sheet, coordinate);
-        if (value == null) {
-            cell.setBlank();
-            return;
-        }
-        var style = sheet.getWorkbook().createCellStyle();
-        style.cloneStyleFrom(cell.getCellStyle());
-        style.setDataFormat(sheet.getWorkbook().getCreationHelper().createDataFormat().getFormat("yyyy-mm-dd"));
-        cell.setCellStyle(style);
-        cell.setCellValue(value.atStartOfDay());
-    }
-    private static void setNumber(XSSFSheet sheet, String coordinate, int value) {
-        cell(sheet, coordinate).setCellValue(value);
-    }
     private static XSSFCell cell(XSSFSheet sheet, String coordinate) {
         CellAddress address = new CellAddress(coordinate);
         var row = sheet.getRow(address.getRow());
@@ -290,7 +275,8 @@ public class ArchiveExportService {
         return row.departmentName() == null ? row.organizationName() : row.organizationName() + " / " + row.departmentName();
     }
     private static String declaration(PersonReadMapper.PersonRow p) {
-        String date = p.declarationDate() == null ? "    年  月  日" : p.declarationDate().getYear() + "年" + p.declarationDate().getMonthValue() + "月" + p.declarationDate().getDayOfMonth() + "日";
+        String date = p.declarationDate();
+        if (date == null || date.isEmpty()) date = "    年  月  日";
         return "承诺人：" + (p.declarationSigner() == null ? "" : p.declarationSigner()) + "  时间：" + date;
     }
     private static String safeFilename(String value) {

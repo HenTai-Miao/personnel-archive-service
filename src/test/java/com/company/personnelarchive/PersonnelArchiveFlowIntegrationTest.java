@@ -5,6 +5,7 @@ import com.company.personnelarchive.archiveimport.ExcelTemplateV1;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.ClientAnchor;
 import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,9 +38,9 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.zip.ZipInputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -121,23 +122,25 @@ class PersonnelArchiveFlowIntegrationTest {
         assertThat(imported.at("/items/0/status").asText()).as(imported.toPrettyString()).isEqualTo("IMPORTED");
         long firstPersonId = activePersonId();
         byte[] storedPhotoBytes = jdbc.queryForObject("SELECT photo_data FROM pa_person_photo WHERE person_id=?", byte[].class, firstPersonId);
-        assertThat(jdbc.queryForObject("SELECT birth_date FROM pa_family_member WHERE person_id=?", LocalDate.class, firstPersonId))
-            .isEqualTo(LocalDate.of(2000, 7, 23));
+        assertThat(jdbc.queryForMap(
+            "SELECT birth_date,age_text FROM pa_family_member WHERE person_id=?", firstPersonId))
+            .containsEntry("birth_date", "2000-07-23")
+            .containsEntry("age_text", "25");
         assertThat(jdbc.queryForMap("SELECT organization_name,department_name FROM pa_employment WHERE person_id=?", firstPersonId))
             .containsEntry("organization_name", "测试单位")
             .containsEntry("department_name", "测试部门");
-        assertThat(jdbc.queryForObject("SELECT start_date FROM pa_education WHERE person_id=? AND education_type='MAIN'", LocalDate.class, firstPersonId))
-            .isEqualTo(LocalDate.of(2020, 9, 1));
-        assertThat(jdbc.queryForObject("SELECT end_date FROM pa_education WHERE person_id=? AND education_type='MAIN'", LocalDate.class, firstPersonId))
-            .isEqualTo(LocalDate.of(2024, 6, 1));
-        assertThat(jdbc.queryForObject("SELECT start_date FROM pa_work_experience WHERE person_id=?", LocalDate.class, firstPersonId))
-            .isEqualTo(LocalDate.of(2024, 7, 1));
-        assertThat(jdbc.queryForObject("SELECT end_date FROM pa_work_experience WHERE person_id=?", LocalDate.class, firstPersonId))
-            .isNull();
+        assertThat(jdbc.queryForMap(
+            "SELECT start_date,end_date,raw_text FROM pa_education WHERE person_id=? AND education_type='MAIN'",
+            firstPersonId)).containsEntry("start_date", "2020.09").containsEntry("end_date", "2024.06")
+            .containsEntry("raw_text", "2020.09-2024.06\t示例大学");
+        assertThat(jdbc.queryForObject("SELECT start_date FROM pa_work_experience WHERE person_id=?", String.class, firstPersonId))
+            .isEqualTo("2024.07");
+        assertThat(jdbc.queryForObject("SELECT end_date FROM pa_work_experience WHERE person_id=?", String.class, firstPersonId))
+            .isEqualTo("至今");
         assertThat(jdbc.queryForObject("SELECT organization_and_position FROM pa_work_experience WHERE person_id=?", String.class, firstPersonId))
             .isEqualTo("初次导入");
-        assertThat(jdbc.queryForObject("SELECT occurred_date FROM pa_reward_punishment WHERE person_id=?", LocalDate.class, firstPersonId))
-            .isEqualTo(LocalDate.of(2025, 1, 1));
+        assertThat(jdbc.queryForObject("SELECT occurred_date FROM pa_reward_punishment WHERE person_id=?", String.class, firstPersonId))
+            .isEqualTo("2025.01");
         assertThat(jdbc.queryForObject("SELECT byte_size FROM pa_person_photo WHERE person_id=?", Long.class, firstPersonId))
             .isPositive();
         var storedPhoto = jdbc.queryForMap("SELECT anchor_col1,anchor_row1,anchor_dx1,anchor_dy1,anchor_col2,anchor_row2,anchor_dx2,anchor_dy2,anchor_type FROM pa_person_photo WHERE person_id=?", firstPersonId);
@@ -243,7 +246,8 @@ class PersonnelArchiveFlowIntegrationTest {
         assertThat(detail.at("/workExperiences/0/rightText").asText()).isEqualTo("覆盖版本");
         assertThat(detail.at("/rewardsPunishments/0/rightText").asText()).isEqualTo("测试奖励");
         assertThat(detail.at("/familyMembers/0/politicalStatus").asText()).isEqualTo("测试面貌");
-        assertThat(detail.at("/declaration/date").asText()).isEqualTo("2026-07-22");
+        assertThat(detail.at("/familyMembers/0/age").asText()).isEqualTo("25");
+        assertThat(detail.at("/declaration/date").asText()).isEqualTo("2026年7月22日");
         assertThat(detail.at("/photo/mimeType").asText()).isEqualTo("image/png");
         assertThat(detail.at("/identityCardMasked").asText()).isEqualTo("9900***********012");
         assertThat(detail.at("/personal/phoneNumberMasked").asText()).isEqualTo("0000*002");
@@ -275,17 +279,15 @@ class PersonnelArchiveFlowIntegrationTest {
             .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
         try (var workbook = new XSSFWorkbook(new ByteArrayInputStream(exported))) {
             var main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
+            DataFormatter formatter = new DataFormatter(Locale.CHINA);
             assertThat(main.getRow(1).getCell(1).getStringCellValue()).isEqualTo(EMPLOYEE_NO);
             assertThat(main.getRow(11).getCell(7).getStringCellValue()).isEqualTo("00000002");
             assertThat(main.getRow(12).getCell(3).getStringCellValue()).isEqualTo("示例大学");
-            assertThat(main.getRow(2).getCell(5).getCellType()).isEqualTo(CellType.NUMERIC);
-            assertThat(main.getRow(2).getCell(5).getLocalDateTimeCellValue().toLocalDate()).isEqualTo(LocalDate.of(2000, 1, 1));
+            assertThat(formatter.formatCellValue(main.getRow(2).getCell(5))).isEqualTo("2000-01-01");
             assertThat(main.getRow(9).getCell(2).getCellType()).isEqualTo(CellType.BLANK);
-            assertThat(main.getRow(38).getCell(3).getCellType()).isEqualTo(CellType.NUMERIC);
-            assertThat(main.getRow(38).getCell(3).getNumericCellValue()).isEqualTo(25);
+            assertThat(formatter.formatCellValue(main.getRow(38).getCell(3))).isEqualTo("25");
             var helperBirthDate = workbook.getSheet(ExcelTemplateV1.AGE_SHEET).getRow(1).getCell(3);
-            assertThat(helperBirthDate.getCellType()).isEqualTo(CellType.NUMERIC);
-            assertThat(helperBirthDate.getLocalDateTimeCellValue().toLocalDate()).isEqualTo(LocalDate.of(2000, 7, 23));
+            assertThat(formatter.formatCellValue(helperBirthDate)).isEqualTo("2000-07-23");
             assertThat(workbook.getSheet(ExcelTemplateV1.AGE_SHEET).getRow(1).getCell(4).getCellType()).isEqualTo(CellType.BLANK);
             assertThat(workbook.getAllPictures()).hasSize(1);
             assertThat(workbook.getAllPictures().getFirst().getData()).isEqualTo(storedPhotoBytes);
@@ -395,10 +397,13 @@ class PersonnelArchiveFlowIntegrationTest {
             main.getRow(33).getCell(3).setCellValue("测试奖励");
             main.getRow(38).getCell(1).setCellValue("测试称谓");
             main.getRow(38).getCell(2).setCellValue("测试乙");
+            main.getRow(38).getCell(3).setCellValue(25);
             main.getRow(38).getCell(4).setCellValue("测试面貌");
             main.getRow(38).getCell(5).setCellValue("测试单位及职务");
             main.getRow(45).getCell(1).setCellValue("承诺人：测试甲  时间：2026年7月22日");
             var helper = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
+            helper.getRow(1).getCell(1).setCellValue("测试称谓");
+            helper.getRow(1).getCell(2).setCellValue("测试乙");
             helper.getRow(1).getCell(3).setCellValue("2000-07-23");
             var image = new BufferedImage(3, 4, BufferedImage.TYPE_INT_RGB);
             var imageBytes = new ByteArrayOutputStream();

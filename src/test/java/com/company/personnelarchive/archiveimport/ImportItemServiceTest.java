@@ -52,9 +52,10 @@ class ImportItemServiceTest {
     @BeforeEach
     void setUp() {
         service = new ImportItemService(imports, persons, writer, reader, properties, audit, clock, pending);
-        document = new ArchiveDocument("T-001", "测试甲", "990000200001010012", null, null, null, null, null,
-            null, null, null, null, null, null, null, null, null, null,
-            List.of(), List.of(), List.of(), List.of(), null, "测试甲", LocalDate.of(2026, 7, 22));
+        document = new ArchiveDocument("T-001", "测试甲", "990000200001010012", null, SourceDate.empty(),
+            null, null, null, null, SourceDate.empty(), null, null, null, null, null, null, null, null,
+            List.of(), List.of(), List.of(), List.of(), null, "测试甲",
+            SourceDate.exact("2026-07-22", LocalDate.of(2026, 7, 22)));
         prepared = new SnapshotWriter.PreparedArchive(document, "T-001", "测试甲", "测试甲",
             "990000200001010012", new byte[]{1, 2, 3});
     }

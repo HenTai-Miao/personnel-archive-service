@@ -1,5 +1,7 @@
 # Label-Anchored Workbook Import Implementation Plan
 
+> Superseded in one respect by the source-value fidelity plan: every business date is stored as its exact saved string in `VARCHAR`; year, year-month, and year-month-day precision is never expanded. Literal family ages are copied unchanged; only the template's exact `DATEDIF(...,TODAY(),"y")` age formula is evaluated at import and frozen as text.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Import all five supported historical personnel workbooks by locating exact template labels, preserving blanks, and accepting any positive number of family-member rows without weakening file or image safety checks.
@@ -101,7 +103,7 @@
 
 - [ ] **Step 5: Accept month-only text and dynamic declaration rows**
 
-  Extend date parsing with the existing `MONTH` pattern and return the first day of that month. Search the resolved declaration value row for signer/date text instead of reading `B46`.
+  Extend date parsing with the existing `MONTH` pattern, preserving the exact visible month text without inventing a day. Search the resolved declaration value row for signer/date text instead of reading `B46`.
 
 - [ ] **Step 6: Run parser and snapshot unit tests**
 

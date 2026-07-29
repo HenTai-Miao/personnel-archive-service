@@ -9,8 +9,13 @@ import org.apache.poi.xssf.usermodel.XSSFCell;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.Year;
+import java.time.YearMonth;
+import java.time.ZoneId;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.function.Consumer;
@@ -71,7 +76,8 @@ class ExcelTemplateV1Test {
         }
         ArchiveDocument document = new ExcelArchiveReader(properties()).read(new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
         assertThat(document.familyMembers()).hasSize(1);
-        assertThat(document.familyMembers().getFirst().birthDate()).isEqualTo(java.time.LocalDate.of(2000, 7, 23));
+        assertThat(document.familyMembers().getFirst().birthDate().exactDate())
+            .isEqualTo(java.time.LocalDate.of(2000, 7, 23));
         assertThat(document.photo()).isNotNull();
         assertThat(document.photo().width()).isEqualTo(2);
         assertThat(document.photo().anchor()).isEqualTo(new ArchiveDocument.PhotoAnchor(
@@ -116,7 +122,7 @@ class ExcelTemplateV1Test {
 
         // Then
         assertThat(document.familyMembers()).containsExactly(
-            new ArchiveDocument.FamilyMember(0, "", "", null, "群众", ""));
+            new ArchiveDocument.FamilyMember(0, "", "", SourceDate.empty(), "", "群众", ""));
     }
 
     @Test
@@ -146,19 +152,110 @@ class ExcelTemplateV1Test {
             .contains("2020.01-2021.01\t测试工作经历");
         assertThat(document.rewardsPunishments()).extracting(ArchiveDocument.OrderedText::rawText)
             .containsExactly("2022.01\t测试奖励");
-        assertThat(document.familyMembers()).containsExactly(new ArchiveDocument.FamilyMember(
-            0, "测试称谓", "测试成员", LocalDate.of(2000, 7, 23), "群众", "测试单位"));
+        assertThat(document.familyMembers()).hasSize(1);
+        assertThat(document.familyMembers().getFirst().birthDate().exactDate())
+            .isEqualTo(LocalDate.of(2000, 7, 23));
+        assertThat(document.familyMembers().getFirst().workplacePosition()).isEqualTo("测试单位");
     }
 
     @Test
-    void readsMonthOnlyTextWithoutInventingFailure() throws Exception {
+    void readsMonthOnlyTextWithoutInventingDay() throws Exception {
         byte[] bytes = workbookBytes(workbook ->
             cell(workbook.getSheet(ExcelTemplateV1.MAIN_SHEET), "F3").setCellValue("1988.07"));
 
         ArchiveDocument document = new ExcelArchiveReader(properties()).read(
             new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
 
-        assertThat(document.birthDate()).isEqualTo(LocalDate.of(1988, 7, 1));
+        assertThat(document.birthDate().text()).isEqualTo("1988.07");
+        assertThat(document.birthDate().exactDate()).isNull();
+        assertThat(document.birthDate().yearMonth()).isEqualTo(YearMonth.of(1988, 7));
+    }
+
+    @Test
+    void readsYearOnlyTextWithoutInventingMonthOrDay() throws Exception {
+        byte[] bytes = workbookBytes(workbook ->
+            cell(workbook.getSheet(ExcelTemplateV1.MAIN_SHEET), "F3").setCellValue("1988"));
+
+        ArchiveDocument document = new ExcelArchiveReader(properties()).read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.birthDate().text()).isEqualTo("1988");
+        assertThat(document.birthDate().exactDate()).isNull();
+        assertThat(document.birthDate().yearMonth()).isNull();
+        assertThat(document.birthDate().year()).isEqualTo(Year.of(1988));
+    }
+
+    @Test
+    void preservesSuppliedFamilyAge() throws Exception {
+        byte[] bytes = workbookBytes(workbook -> {
+            XSSFSheet main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
+            cell(main, "B39").setCellValue("妻子");
+            cell(main, "C39").setCellValue("测试成员");
+            cell(main, "D39").setCellValue(36);
+        });
+
+        ArchiveDocument document = new ExcelArchiveReader(properties()).read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.familyMembers()).hasSize(1);
+        assertThat(document.familyMembers().getFirst().ageText()).isEqualTo("36");
+    }
+
+    @Test
+    void freezesWorkbookAgeFormulaCurrentDisplayValueOnImport() throws Exception {
+        LocalDate birthDate = LocalDate.of(1980, 1, 15);
+        byte[] bytes = workbookBytes(workbook -> {
+            XSSFSheet main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
+            cell(main, "B39").setCellValue("测试称谓");
+            cell(main, "C39").setCellValue("测试成员");
+            XSSFCell age = cell(main, "D39");
+            age.setCellFormula("DATEDIF(家庭成员年龄计算!D2,TODAY(),\"y\")");
+            age.setCellValue(45);
+            XSSFSheet helper = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
+            cell(helper, "B2").setCellValue("测试称谓");
+            cell(helper, "C2").setCellValue("测试成员");
+            cell(helper, "D2").setCellValue(birthDate.toString());
+        });
+
+        ArchiveDocument document = readerAt("2026-07-29T00:00:00Z").read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.familyMembers()).singleElement()
+            .extracting(ArchiveDocument.FamilyMember::ageText)
+            .isEqualTo("46");
+    }
+
+    @Test
+    void freezesWorkbookAgeFormulaThatReferencesBlankDateLikeExcel() throws Exception {
+        byte[] bytes = workbookBytes(workbook -> {
+            XSSFSheet main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
+            cell(main, "B39").setCellValue("测试称谓");
+            cell(main, "C39").setCellValue("测试成员");
+            XSSFCell age = cell(main, "D39");
+            age.setCellFormula("DATEDIF(家庭成员年龄计算!D2,TODAY(),\"y\")");
+            age.setCellValue(125);
+        });
+
+        ArchiveDocument document = readerAt("2026-07-29T00:00:00Z").read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.familyMembers()).singleElement()
+            .extracting(ArchiveDocument.FamilyMember::ageText)
+            .isEqualTo("126");
+    }
+
+    @Test
+    void preservesMonthOnlyDeclarationDate() throws Exception {
+        byte[] bytes = workbookBytes(workbook ->
+            cell(workbook.getSheet(ExcelTemplateV1.MAIN_SHEET), "B46")
+                .setCellValue("承诺人：测试甲  时间：2026年7月"));
+
+        ArchiveDocument document = new ExcelArchiveReader(properties()).read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.declarationDate().text()).isEqualTo("2026年7月");
+        assertThat(document.declarationDate().exactDate()).isNull();
+        assertThat(document.declarationDate().yearMonth()).isEqualTo(YearMonth.of(2026, 7));
     }
 
     @Test
@@ -188,8 +285,8 @@ class ExcelTemplateV1Test {
             new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
 
         assertThat(document.familyMembers()).hasSize(10);
-        assertThat(document.familyMembers().get(8).birthDate()).isEqualTo(LocalDate.of(2000, 7, 9));
-        assertThat(document.familyMembers().get(9).birthDate()).isNull();
+        assertThat(document.familyMembers().get(8).birthDate().exactDate()).isEqualTo(LocalDate.of(2000, 7, 9));
+        assertThat(document.familyMembers().get(9).birthDate().exactDate()).isNull();
     }
 
     @Test
@@ -228,7 +325,7 @@ class ExcelTemplateV1Test {
             new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
 
         assertThat(document.familyMembers()).singleElement()
-            .extracting(ArchiveDocument.FamilyMember::birthDate)
+            .extracting(member -> member.birthDate().exactDate())
             .isNull();
     }
 
@@ -248,7 +345,7 @@ class ExcelTemplateV1Test {
             new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
 
         assertThat(document.familyMembers()).singleElement()
-            .extracting(ArchiveDocument.FamilyMember::birthDate)
+            .extracting(member -> member.birthDate().exactDate())
             .isEqualTo(LocalDate.of(1960, 1, 2));
     }
 
@@ -276,5 +373,10 @@ class ExcelTemplateV1Test {
                 "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
             new ArchiveProperties.Excel(12_582_912, 5_242_880, 500, "classpath:/excel/personnel-archive-template-v1.xlsx"),
             new ArchiveProperties.BootstrapAdmin("", "", "初始管理员"));
+    }
+
+    private static ExcelArchiveReader readerAt(String instant) {
+        ZoneId china = ZoneId.of("Asia/Shanghai");
+        return new ExcelArchiveReader(properties(), Clock.fixed(Instant.parse(instant), china));
     }
 }

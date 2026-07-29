@@ -4,12 +4,9 @@ import com.company.personnelarchive.audit.AuditService;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
 import com.company.personnelarchive.configuration.ArchiveProperties;
-import com.company.personnelarchive.family.AgeCalculator;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
-import java.time.Clock;
-import java.time.LocalDate;
 import java.util.List;
 
 @Service
@@ -20,13 +17,12 @@ import java.util.List;
 public class PersonQueryService {
     private final PersonReadMapper mapper;
     private final ArchiveProperties properties;
-    private final Clock clock;
     private final AuditService audit;
     private final IdentityProtection identityProtection;
 
-    public PersonQueryService(PersonReadMapper mapper, ArchiveProperties properties, Clock clock,
+    public PersonQueryService(PersonReadMapper mapper, ArchiveProperties properties,
                               AuditService audit, IdentityProtection identityProtection) {
-        this.mapper = mapper; this.properties = properties; this.clock = clock; this.audit = audit;
+        this.mapper = mapper; this.properties = properties; this.audit = audit;
         this.identityProtection = identityProtection;
     }
 
@@ -38,7 +34,7 @@ public class PersonQueryService {
         PersonReadMapper.PhotoMetadataRow photo = mapper.findPhotoMetadata(properties.tenantId(), personId);
         var family = mapper.findFamily(properties.tenantId(), personId).stream()
             .map(member -> new PersonDtos.FamilyMember(value(member.memberName()), value(member.relationshipName()),
-                date(member.birthDate()), member.birthDate() == null ? null : AgeCalculator.completedYears(member.birthDate(), clock),
+                value(member.birthDate()), value(member.ageText()),
                 value(member.politicalStatus()), value(member.organizationAndPosition())))
             .toList();
         PersonDtos.Detail detail = new PersonDtos.Detail(
@@ -48,7 +44,7 @@ public class PersonQueryService {
             education.stream().filter(row -> "MAIN".equals(row.educationType())).map(PersonQueryService::orderedText).toList(),
             mapper.findWork(properties.tenantId(), personId).stream().map(PersonQueryService::orderedText).toList(),
             mapper.findRewards(properties.tenantId(), personId).stream().map(PersonQueryService::orderedText).toList(),
-            family, new PersonDtos.DeclarationInfo(value(person.declarationSigner()), date(person.declarationDate())),
+            family, new PersonDtos.DeclarationInfo(value(person.declarationSigner()), value(person.declarationDate())),
             photo == null ? null : new PersonDtos.PhotoMetadata(photo.mimeType(), photo.originalFilename(),
                 photo.byteSize(), photo.widthPixels(), photo.heightPixels()),
             new PersonDtos.ArchiveMetadata(value(person.templateVersion()), person.snapshotVersion(), person.updatedAt().toString()));
@@ -132,9 +128,9 @@ public class PersonQueryService {
     }
 
     private static PersonDtos.PersonalInfo personal(PersonReadMapper.PersonRow person) {
-        return new PersonDtos.PersonalInfo(value(person.gender()), date(person.birthDate()), value(person.nation()),
+        return new PersonDtos.PersonalInfo(value(person.gender()), value(person.birthDate()), value(person.nation()),
             value(person.nativePlace()), value(person.birthPlace()), value(person.politicalStatus()),
-            date(person.politicalJoinDate()), value(person.maritalStatus()), value(person.healthStatus()),
+            value(person.politicalJoinDate()), value(person.maritalStatus()), value(person.healthStatus()),
             value(person.mailingAddress()), value(person.postalCode()),
             SensitiveValueMasker.mask(person.phoneNumber()));
     }
@@ -142,8 +138,9 @@ public class PersonQueryService {
     private static PersonDtos.EmploymentDetails employment(PersonReadMapper.EmploymentRow row) {
         if (row == null) return new PersonDtos.EmploymentDetails("", "", "", "", "", "", "");
         return new PersonDtos.EmploymentDetails(value(row.organizationName()), value(row.departmentName()),
-            date(row.workStartDate()), date(row.dispatchedToBiddingCompanyDate()), value(row.positionName()),
-            value(row.professionalTitleOrSkill()), date(row.titleOrSkillAcquiredDate()));
+            value(row.workStartDate()), value(row.dispatchedToBiddingCompanyDate()),
+            value(row.positionName()), value(row.professionalTitleOrSkill()),
+            value(row.titleOrSkillAcquiredDate()));
     }
 
     private static PersonDtos.EducationDetails education(List<PersonReadMapper.EducationRow> rows) {
@@ -174,7 +171,6 @@ public class PersonQueryService {
         return new PersonDtos.OrderedText(sortOrder, columns[0], columns.length == 1 ? "" : columns[1]);
     }
 
-    private static String date(LocalDate value) { return value == null ? "" : value.toString(); }
     private static String value(String value) { return value == null ? "" : value; }
 
     public record PhotoContent(byte[] bytes, String mimeType, String filename) {}

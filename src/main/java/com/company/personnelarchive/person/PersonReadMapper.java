@@ -5,16 +5,16 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
-import java.time.LocalDate;
 import java.time.Instant;
 import java.util.List;
 
 @Mapper
 public interface PersonReadMapper {
     @Select("""
-        SELECT id,employee_no,person_name,id_card_ciphertext,id_card_last_four,gender,birth_date,nation,native_place,
-               birth_place,political_status,political_join_date,marital_status,health_status,mailing_address,postal_code,
-               phone_number,declaration_signer,declaration_date,template_version,snapshot_version,updated_at
+        SELECT id,employee_no,person_name,id_card_ciphertext,id_card_last_four,gender,birth_date,
+               nation,native_place,birth_place,political_status,political_join_date,
+               marital_status,health_status,mailing_address,postal_code,phone_number,declaration_signer,
+               declaration_date,template_version,snapshot_version,updated_at
         FROM pa_person WHERE tenant_id=#{tenantId} AND id=#{personId} AND is_deleted=0
         """)
     PersonRow findActive(@Param("tenantId") long tenantId, @Param("personId") long personId);
@@ -31,7 +31,7 @@ public interface PersonReadMapper {
     @Select("SELECT occurred_date,raw_text,sort_order FROM pa_reward_punishment WHERE tenant_id=#{tenantId} AND person_id=#{personId} ORDER BY sort_order")
     List<RewardRow> findRewards(@Param("tenantId") long tenantId, @Param("personId") long personId);
 
-    @Select("SELECT id,relationship_name,member_name,birth_date,political_status,organization_and_position,raw_text,sort_order FROM pa_family_member WHERE tenant_id=#{tenantId} AND person_id=#{personId} ORDER BY sort_order")
+    @Select("SELECT id,relationship_name,member_name,birth_date,age_text,political_status,organization_and_position,raw_text,sort_order FROM pa_family_member WHERE tenant_id=#{tenantId} AND person_id=#{personId} ORDER BY sort_order")
     List<FamilyRow> findFamily(@Param("tenantId") long tenantId, @Param("personId") long personId);
 
     @Select("SELECT photo_data,mime_type,original_filename,byte_size,width_pixels,height_pixels,sha256,anchor_col1,anchor_row1,anchor_dx1,anchor_dy1,anchor_col2,anchor_row2,anchor_dx2,anchor_dy2,anchor_type FROM pa_person_photo WHERE tenant_id=#{tenantId} AND person_id=#{personId}")
@@ -95,19 +95,22 @@ public interface PersonReadMapper {
     long countFamily(@Param("tenantId") long tenantId, @Param("escapedName") String escapedName);
 
     record PersonRow(long id, String employeeNo, String personName, byte[] idCardCiphertext, String idCardLastFour,
-                     String gender, LocalDate birthDate, String nation, String nativePlace, String birthPlace,
-                     String politicalStatus, LocalDate politicalJoinDate, String maritalStatus, String healthStatus,
+                     String gender, String birthDate, String nation, String nativePlace,
+                     String birthPlace, String politicalStatus, String politicalJoinDate,
+                     String maritalStatus, String healthStatus,
                      String mailingAddress, String postalCode, String phoneNumber, String declarationSigner,
-                     LocalDate declarationDate, String templateVersion, long snapshotVersion, Instant updatedAt) {}
-    record EmploymentRow(String organizationName, String departmentName, LocalDate workStartDate,
-                         LocalDate dispatchedToBiddingCompanyDate, String positionName,
-                         String professionalTitleOrSkill, LocalDate titleOrSkillAcquiredDate) {}
+                     String declarationDate, String templateVersion,
+                     long snapshotVersion, Instant updatedAt) {}
+    record EmploymentRow(String organizationName, String departmentName, String workStartDate,
+                         String dispatchedToBiddingCompanyDate, String positionName,
+                         String professionalTitleOrSkill, String titleOrSkillAcquiredDate) {}
     record EducationRow(String educationType, String institutionName, String departmentAndMajor, String educationLevel,
-                        String degreeName, LocalDate startDate, LocalDate endDate, String rawText, int sortOrder) {}
-    record WorkRow(LocalDate startDate, LocalDate endDate, String organizationAndPosition, String rawText, int sortOrder) {}
-    record RewardRow(LocalDate occurredDate, String rawText, int sortOrder) {}
-    record FamilyRow(long id, String relationshipName, String memberName, LocalDate birthDate, String politicalStatus,
-                     String organizationAndPosition, String rawText, int sortOrder) {}
+                        String degreeName, String startDate, String endDate, String rawText, int sortOrder) {}
+    record WorkRow(String startDate, String endDate, String organizationAndPosition, String rawText, int sortOrder) {}
+    record RewardRow(String occurredDate, String rawText, int sortOrder) {}
+    record FamilyRow(long id, String relationshipName, String memberName, String birthDate,
+                     String ageText, String politicalStatus, String organizationAndPosition,
+                     String rawText, int sortOrder) {}
     record PhotoRow(byte[] photoData, String mimeType, String originalFilename, long byteSize,
                     int widthPixels, int heightPixels, byte[] sha256,
                     int anchorCol1, int anchorRow1, int anchorDx1, int anchorDy1,

@@ -2,6 +2,7 @@
 package com.company.personnelarchive.person;
 
 import com.company.personnelarchive.archiveimport.ArchiveDocument;
+import com.company.personnelarchive.archiveimport.SourceDate;
 import com.company.personnelarchive.configuration.ArchiveProperties;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -9,6 +10,8 @@ import org.mockito.ArgumentCaptor;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.Year;
+import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.stream.IntStream;
@@ -51,7 +54,7 @@ class SnapshotWriterTest {
     void insertPreservesPartiallyFilledFamilyMember() {
         // Given
         ArchiveDocument document = document(List.of(
-            new ArchiveDocument.FamilyMember(0, "", "", null, "群众", "")));
+            new ArchiveDocument.FamilyMember(0, "", "", SourceDate.empty(), "", "群众", "")));
         SnapshotWriter.PreparedArchive prepared = new SnapshotWriter.PreparedArchive(
             document, "", "", "", null, null);
         doAnswer(invocation -> {
@@ -70,15 +73,37 @@ class SnapshotWriterTest {
         assertThat(person.getValue().idCardCiphertext).isNull();
         assertThat(person.getValue().idCardHmac).isNull();
         assertThat(person.getValue().idCardLastFour).isNull();
-        verify(mapper).insertFamily(1, 7, "", "", "", null, "群众", null,
-            "\t\t\t群众\t", 1);
+        verify(mapper).insertFamily(1, 7, "", "", "", null, null, "群众", null,
+            "\t\t\t\t群众\t", 1);
+    }
+
+    @Test
+    void insertPreservesPartialDatesAndSuppliedFamilyAge() {
+        ArchiveDocument document = new ArchiveDocument("", "", "", null,
+            SourceDate.year("1988", Year.of(1988)), null, null, null, null,
+            SourceDate.empty(), null, null, null, null, null, null, null, null, List.of(), List.of(),
+            List.of(), List.of(new ArchiveDocument.FamilyMember(0, "妻子", "测试成员",
+                SourceDate.month("1990.02", YearMonth.of(1990, 2)), "36", "群众", "测试单位")),
+            null, "", SourceDate.empty());
+        doAnswer(invocation -> {
+            ((PersonMapper.PersonInsert) invocation.getArgument(0)).id = 7L;
+            return 1;
+        }).when(mapper).insertPerson(any());
+
+        writer.insert(writer.prepare(document), 9, 1, null);
+
+        ArgumentCaptor<PersonMapper.PersonInsert> person = ArgumentCaptor.forClass(PersonMapper.PersonInsert.class);
+        verify(mapper).insertPerson(person.capture());
+        assertThat(person.getValue().birthDate).isEqualTo("1988");
+        verify(mapper).insertFamily(1, 7, "妻子", "测试成员", "测试成员", "1990.02",
+            "36", "群众", "测试单位", "妻子\t测试成员\t1990.02\t36\t群众\t测试单位", 1);
     }
 
     @Test
     void insertsEveryFamilyMemberBeyondTemplateSixRows() {
         List<ArchiveDocument.FamilyMember> members = IntStream.range(0, 10)
             .mapToObj(index -> new ArchiveDocument.FamilyMember(
-                index, "称谓" + index, "成员" + index, null, "", ""))
+                index, "称谓" + index, "成员" + index, SourceDate.empty(), "", "", ""))
             .toList();
         ArchiveDocument document = document(members);
         doAnswer(invocation -> {
@@ -91,14 +116,14 @@ class SnapshotWriterTest {
 
         ArgumentCaptor<Integer> orders = ArgumentCaptor.forClass(Integer.class);
         verify(mapper, times(10)).insertFamily(eq(1L), eq(7L), anyString(), anyString(), anyString(),
-            isNull(), isNull(), isNull(), anyString(), orders.capture());
+            isNull(), isNull(), isNull(), isNull(), anyString(), orders.capture());
         assertThat(orders.getAllValues()).containsExactly(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
     }
 
     private static ArchiveDocument document(List<ArchiveDocument.FamilyMember> family) {
-        return new ArchiveDocument("", "", "", null, null, null, null, null, null, null,
-            null, null, null, null, null, null, null, null, List.of(), List.of(), List.of(),
-            family, null, "", null);
+        return new ArchiveDocument("", "", "", null, SourceDate.empty(), null, null, null, null,
+            SourceDate.empty(), null, null, null, null, null, null, null, null, List.of(), List.of(),
+            List.of(), family, null, "", SourceDate.empty());
     }
 
     private static ArchiveProperties properties() {

@@ -1,4 +1,4 @@
-/* 时间配置：提供统一可替换 Clock，保证年龄、锁定和令牌过期测试可重复。 */
+/* 时间配置：提供统一可替换 Clock，保证日期合法性、锁定和令牌过期测试可重复。 */
 package com.company.personnelarchive.configuration;
 
 import org.springframework.context.annotation.Bean;

@@ -28,7 +28,7 @@ public final class PersonDtos {
     public record EducationSummary(String institutionName, String departmentAndMajor,
                                    String educationLevel, String degreeName) {}
     public record OrderedText(int sortOrder, String leftText, String rightText) {}
-    public record FamilyMember(String name, String relationship, String birthDate, Integer age,
+    public record FamilyMember(String name, String relationship, String birthDate, String age,
                                String politicalStatus, String organizationAndPosition) {}
     public record DeclarationInfo(String signer, String date) {}
     public record PhotoMetadata(String mimeType, String originalFilename, long byteSize,

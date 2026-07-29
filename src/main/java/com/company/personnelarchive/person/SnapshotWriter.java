@@ -69,13 +69,15 @@ public class SnapshotWriter {
             row.idCardHmac = prepared.identityHmac();
             row.idCardLastFour = IdentityCard.lastFour(prepared.identityCard());
         }
-        row.gender = blankToNull(d.gender()); row.birthDate = d.birthDate(); row.nation = blankToNull(d.ethnicity());
+        row.gender = blankToNull(d.gender()); row.birthDate = blankToNull(d.birthDate().text());
+        row.nation = blankToNull(d.ethnicity());
         row.nativePlace = blankToNull(d.nativePlace()); row.birthPlace = blankToNull(d.birthPlace());
-        row.politicalStatus = blankToNull(d.politicalStatus()); row.politicalJoinDate = d.politicalJoinDate();
+        row.politicalStatus = blankToNull(d.politicalStatus());
+        row.politicalJoinDate = blankToNull(d.politicalJoinDate().text());
         row.maritalStatus = blankToNull(d.maritalStatus()); row.healthStatus = blankToNull(d.healthStatus());
         row.mailingAddress = blankToNull(d.address()); row.postalCode = blankToNull(d.postalCode());
         row.phoneNumber = blankToNull(d.phone()); row.declarationSigner = blankToNull(d.declarationSigner());
-        row.declarationDate = d.declarationDate(); row.templateVersion = ExcelTemplateV1.VERSION;
+        row.declarationDate = blankToNull(d.declarationDate().text()); row.templateVersion = ExcelTemplateV1.VERSION;
         row.snapshotVersion = snapshotVersion; row.previousPersonId = previousPersonId; row.operatorId = operatorId;
         mapper.insertPerson(row);
         long personId = row.id;
@@ -88,8 +90,9 @@ public class SnapshotWriter {
         if (employment != null) {
             OrganizationDepartment organization = splitOrganizationDepartment(employment.organizationDepartment());
             mapper.insertEmployment(properties.tenantId(), personId,
-                organization.organization(), organization.department(), employment.workStartDate(), employment.dispatchDate(),
-                blankToNull(employment.position()), blankToNull(employment.titleSkill()), employment.titleObtainedDate());
+                organization.organization(), organization.department(), blankToNull(employment.workStartDate().text()),
+                blankToNull(employment.dispatchDate().text()), blankToNull(employment.position()),
+                blankToNull(employment.titleSkill()), blankToNull(employment.titleObtainedDate().text()));
         }
         writeSummary(personId, "FULL_TIME", d.fullTimeEducation());
         writeSummary(personId, "IN_SERVICE", d.inServiceEducation());
@@ -104,7 +107,8 @@ public class SnapshotWriter {
         if (d.familyMembers() != null) d.familyMembers().forEach(member -> {
             String memberName = cleanOptional(member.name());
             String relationship = cleanOptional(member.relationship());
-            mapper.insertFamily(properties.tenantId(), personId, relationship, memberName, NameNormalizer.normalize(memberName), member.birthDate(),
+            mapper.insertFamily(properties.tenantId(), personId, relationship, memberName, NameNormalizer.normalize(memberName),
+                blankToNull(member.birthDate().text()), blankToNull(member.ageText()),
                 blankToNull(member.politicalStatus()), blankToNull(member.workplacePosition()), familyRaw(member), member.sortOrder() + 1);
         });
         if (d.photo() != null) {
@@ -136,7 +140,8 @@ public class SnapshotWriter {
 
     private static String familyRaw(ArchiveDocument.FamilyMember m) {
         return String.join("\t", nullToEmpty(m.relationship()), nullToEmpty(m.name()),
-            m.birthDate() == null ? "" : m.birthDate().toString(), nullToEmpty(m.politicalStatus()), nullToEmpty(m.workplacePosition()));
+            m.birthDate().text(), nullToEmpty(m.ageText()), nullToEmpty(m.politicalStatus()),
+            nullToEmpty(m.workplacePosition()));
     }
 
     private static String cleanOptional(String value) { return value == null ? "" : value.strip(); }

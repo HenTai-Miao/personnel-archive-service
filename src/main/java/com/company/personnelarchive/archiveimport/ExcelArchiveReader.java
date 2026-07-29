@@ -14,14 +14,19 @@ import org.apache.poi.xssf.usermodel.XSSFPicture;
 import org.apache.poi.xssf.usermodel.XSSFDrawing;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.DateTimeException;
+import java.time.Period;
+import java.time.Year;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -48,13 +53,17 @@ public class ExcelArchiveReader {
         DateTimeFormatter.ofPattern("yyyy.M.d"),
         DateTimeFormatter.ofPattern("yyyy年M月d日")
     );
+    private static final Pattern YEAR = Pattern.compile("^(\\d{4})(?:年)?$");
     private static final Pattern MONTH = Pattern.compile("^(\\d{4})(?:[./-]|年)(\\d{1,2})(?:月)?$");
-    private static final Pattern MONTH_RANGE = Pattern.compile(
-        "^(\\d{4})(?:[./-]|年)(\\d{1,2})(?:月)?\\s*(?:-|—|–|~|至)\\s*(?:(\\d{4})(?:[./-]|年)(\\d{1,2})(?:月)?|至今|现在|今)$");
-    private static final Pattern HELPER_DATE_REFERENCE = Pattern.compile(
-        "(?:'" + Pattern.quote(ExcelTemplateV1.AGE_SHEET) + "'|" + Pattern.quote(ExcelTemplateV1.AGE_SHEET)
-            + ")!\\$?D\\$?(\\d+)");
-
+    private static final String PARTIAL_DATE =
+        "\\d{4}(?:(?:[./-]\\d{1,2})(?:[./-]\\d{1,2})?|年(?:\\d{1,2}月(?:\\d{1,2}日)?)?)?";
+    private static final Pattern DATE_RANGE = Pattern.compile(
+        "^(" + PARTIAL_DATE + ")\\s*(?:-|—|–|~|至)\\s*(" + PARTIAL_DATE + "|至今|现在|今)$");
+    private static final Pattern AGE_FORMULA = Pattern.compile(
+        "^\\s*DATEDIF\\s*\\(\\s*(?:'" + Pattern.quote(ExcelTemplateV1.AGE_SHEET) + "'|"
+            + Pattern.quote(ExcelTemplateV1.AGE_SHEET)
+            + ")!\\$?D\\$?(\\d+)\\s*,\\s*TODAY\\s*\\(\\s*\\)\\s*,\\s*\"y\"\\s*\\)\\s*$",
+        Pattern.CASE_INSENSITIVE);
     static {
         // Apache POI 的限制是进程级设置，必须在打开任何用户工作簿之前完成，以抵御 ZIP 炸弹。
         ZipSecureFile.setMinInflateRatio(0.01d);
@@ -63,10 +72,19 @@ public class ExcelArchiveReader {
     }
 
     private final ArchiveProperties properties;
+    private final Clock clock;
     private final DataFormatter formatter = new DataFormatter(Locale.CHINA);
 
     public ExcelArchiveReader(ArchiveProperties properties) {
+        this(properties, Clock.system(ZoneId.of("Asia/Shanghai")));
+    }
+
+    @Autowired
+    public ExcelArchiveReader(ArchiveProperties properties, Clock clock) {
         this.properties = properties;
+        this.clock = clock;
+        // 除模板的精确年龄公式外，公式仍只读文件缓存，避免执行不受信任的任意表达式。
+        formatter.setUseCachedValuesForFormulaCells(true);
     }
 
     public ArchiveDocument read(InputStream source, long contentLength, String originalFilename) {
@@ -139,7 +157,7 @@ public class ExcelArchiveReader {
             // raw_text 和原始行序是无损导出的依据；解析出的日期只用于结构化查询，不能替代原文。
             String raw = left.isBlank() ? right : right.isBlank() ? left : left + "\t" + right;
             if (!raw.isBlank()) {
-                DateRange range = parseMonthRange(left);
+                DateRange range = parseDateRange(left);
                 rows.add(new ArchiveDocument.OrderedText(rows.size(), left, right, raw, range.start(), range.end()));
             }
         }
@@ -153,18 +171,56 @@ public class ExcelArchiveReader {
         for (int row = layout.familyHeaderRow() + 1; row < layout.declarationValueRow(); row++) {
             String relationship = text(layout.main(), row, 1);
             String name = text(layout.main(), row, 2);
-            String age = text(layout.main(), row, 3);
             String political = text(layout.main(), row, 4);
             String workplace = joinNonBlank(layout.main(), row, 5, 8);
+            String age = familyAgeText(layout, row);
             if (String.join("", relationship, name, age, political, workplace).isBlank()
                 && !isFormula(layout.main(), row, 3)) {
                 continue;
             }
-            LocalDate birthDate = resolveFamilyBirthDate(layout, row, relationship, name, helperRows, usedHelperRows);
+            SourceDate birthDate = resolveFamilyBirthDate(layout, row, relationship, name, helperRows, usedHelperRows);
             family.add(new ArchiveDocument.FamilyMember(family.size(), relationship, name, birthDate,
-                political, workplace));
+                age, political, workplace));
         }
         return family;
+    }
+
+    private String familyAgeText(WorkbookLayoutV1 layout, int mainRow) {
+        Cell ageCell = cell(layout.main(), mainRow, 3);
+        String savedValue = text(layout.main(), mainRow, 3);
+        if (ageCell == null || ageCell.getCellType() != CellType.FORMULA) return savedValue;
+
+        var formula = AGE_FORMULA.matcher(ageCell.getCellFormula());
+        if (!formula.matches()) return savedValue;
+        int helperRow = Integer.parseInt(formula.group(1)) - 1;
+        LocalDate startDate = formulaStartDate(layout, helperRow);
+        LocalDate today = LocalDate.now(clock);
+        if (startDate == null || startDate.isAfter(today)) return savedValue;
+
+        // 只冻结工作簿明确给出的 DATEDIF(...,TODAY(),"y") 结果；查询、展示和导出不再计算。
+        return Integer.toString(Period.between(startDate, today).getYears());
+    }
+
+    private static LocalDate formulaStartDate(WorkbookLayoutV1 layout, int helperRow) {
+        Cell cell = cell(layout.helper(), helperRow, 3);
+        // Excel 将公式直接引用的真正空单元格作为序列值 0；这也是用户打开文件时看到的结果。
+        if (cell == null || cell.getCellType() == CellType.BLANK) return LocalDate.of(1899, 12, 30);
+        CellType valueType = cell.getCellType() == CellType.FORMULA
+            ? cell.getCachedFormulaResultType() : cell.getCellType();
+        if (valueType == CellType.NUMERIC) {
+            double value = cell.getNumericCellValue();
+            if (!DateUtil.isValidExcelDate(value)) return null;
+            return DateUtil.getLocalDateTime(value, layout.main().getWorkbook().isDate1904()).toLocalDate();
+        }
+        if (valueType != CellType.STRING) return null;
+        String raw = cell.getStringCellValue().strip();
+        if (raw.isEmpty()) return LocalDate.of(1899, 12, 30);
+        for (DateTimeFormatter dateFormatter : DATE_FORMATTERS) {
+            try {
+                return LocalDate.parse(raw, dateFormatter);
+            } catch (DateTimeParseException ignored) { }
+        }
+        return null;
     }
 
     private List<HelperFamilyRow> readHelperRows(WorkbookLayoutV1 layout) {
@@ -181,31 +237,31 @@ public class ExcelArchiveReader {
         return rows;
     }
 
-    private LocalDate resolveFamilyBirthDate(WorkbookLayoutV1 layout, int mainRow, String relationship,
-                                             String name, List<HelperFamilyRow> helpers,
-                                             Set<Integer> usedHelperRows) {
+    private SourceDate resolveFamilyBirthDate(WorkbookLayoutV1 layout, int mainRow, String relationship,
+                                              String name, List<HelperFamilyRow> helpers,
+                                              Set<Integer> usedHelperRows) {
         Cell ageCell = cell(layout.main(), mainRow, 3);
         if (ageCell != null && ageCell.getCellType() == CellType.FORMULA) {
-            var reference = HELPER_DATE_REFERENCE.matcher(ageCell.getCellFormula());
-            if (reference.find()) {
+            var reference = AGE_FORMULA.matcher(ageCell.getCellFormula());
+            if (reference.matches()) {
                 int referencedRow = Integer.parseInt(reference.group(1)) - 1;
                 return helpers.stream().filter(helper -> helper.row() == referencedRow).findFirst()
                     .map(helper -> {
                         usedHelperRows.add(helper.row());
                         return parseDate(layout.helper(), helper.dateAddress());
-                    }).orElse(null);
+                    }).orElse(SourceDate.empty());
             }
         }
 
         String relationshipKey = WorkbookLayoutV1.normalized(relationship);
         String nameKey = WorkbookLayoutV1.normalized(name);
-        if (relationshipKey.isBlank() && nameKey.isBlank()) return null;
+        if (relationshipKey.isBlank() && nameKey.isBlank()) return SourceDate.empty();
         List<HelperFamilyRow> matches = helpers.stream()
             .filter(helper -> !usedHelperRows.contains(helper.row()))
             .filter(helper -> relationshipKey.equals(WorkbookLayoutV1.normalized(helper.relationship())))
             .filter(helper -> nameKey.equals(WorkbookLayoutV1.normalized(helper.name())))
             .toList();
-        if (matches.size() != 1) return null;
+        if (matches.size() != 1) return SourceDate.empty();
         HelperFamilyRow match = matches.getFirst();
         usedHelperRows.add(match.row());
         return parseDate(layout.helper(), match.dateAddress());
@@ -213,29 +269,48 @@ public class ExcelArchiveReader {
 
     private record HelperFamilyRow(int row, String relationship, String name, CellAddress dateAddress) {}
 
-    private static DateRange parseMonthRange(String raw) {
+    private static DateRange parseDateRange(String raw) {
         if (raw == null || raw.isBlank()) return DateRange.EMPTY;
-        var range = MONTH_RANGE.matcher(raw.strip());
+        String value = raw.strip();
+        var range = DATE_RANGE.matcher(value);
         if (range.matches()) {
             try {
-                LocalDate start = LocalDate.of(Integer.parseInt(range.group(1)), Integer.parseInt(range.group(2)), 1);
-                LocalDate end = range.group(3) == null ? null
-                    : LocalDate.of(Integer.parseInt(range.group(3)), Integer.parseInt(range.group(4)), 1);
-                return new DateRange(start, end);
+                validatePartialDate(range.group(1));
+                if (!Set.of("至今", "现在", "今").contains(range.group(2))) validatePartialDate(range.group(2));
+                return new DateRange(range.group(1), range.group(2));
             } catch (DateTimeException ignored) {
                 return DateRange.EMPTY;
             }
         }
-        var month = MONTH.matcher(raw.strip());
-        if (!month.matches()) return DateRange.EMPTY;
         try {
-            return new DateRange(LocalDate.of(Integer.parseInt(month.group(1)), Integer.parseInt(month.group(2)), 1), null);
+            validatePartialDate(value);
+            return new DateRange(value, null);
         } catch (DateTimeException ignored) {
             return DateRange.EMPTY;
         }
     }
 
-    private record DateRange(LocalDate start, LocalDate end) {
+    private static void validatePartialDate(String raw) {
+        var year = YEAR.matcher(raw);
+        if (year.matches()) {
+            Year.of(Integer.parseInt(year.group(1)));
+            return;
+        }
+        var month = MONTH.matcher(raw);
+        if (month.matches()) {
+            YearMonth.of(Integer.parseInt(month.group(1)), Integer.parseInt(month.group(2)));
+            return;
+        }
+        for (DateTimeFormatter formatter : DATE_FORMATTERS) {
+            try {
+                LocalDate.parse(raw, formatter);
+                return;
+            } catch (DateTimeParseException ignored) { }
+        }
+        throw new DateTimeParseException("unsupported partial date", raw, 0);
+    }
+
+    private record DateRange(String start, String end) {
         private static final DateRange EMPTY = new DateRange(null, null);
     }
 
@@ -328,26 +403,37 @@ public class ExcelArchiveReader {
         return cell != null && cell.getCellType() == CellType.FORMULA;
     }
 
-    private LocalDate parseDate(XSSFSheet sheet, CellAddress address) {
+    private SourceDate parseDate(XSSFSheet sheet, CellAddress address) {
         Cell cell = cell(sheet, address.getRow(), address.getColumn());
-        if (cell == null || cell.getCellType() == CellType.BLANK) return null;
-        if ((cell.getCellType() == CellType.NUMERIC
-            || cell.getCellType() == CellType.FORMULA && cell.getCachedFormulaResultType() == CellType.NUMERIC)
-            && DateUtil.isCellDateFormatted(cell)) {
-            return cell.getLocalDateTimeCellValue().toLocalDate();
-        }
+        if (cell == null || cell.getCellType() == CellType.BLANK) return SourceDate.empty();
         String raw = formatter.formatCellValue(cell).strip();
-        if (raw.isEmpty()) return null;
-        for (DateTimeFormatter dateFormatter : DATE_FORMATTERS) {
-            try { return LocalDate.parse(raw, dateFormatter); } catch (DateTimeParseException ignored) { }
+        if (raw.isEmpty()) return SourceDate.empty();
+        var year = YEAR.matcher(raw);
+        if (year.matches()) {
+            try {
+                return SourceDate.year(raw, Year.of(Integer.parseInt(year.group(1))));
+            } catch (DateTimeException ignored) {
+                // Fall through to the same safe coordinate-only validation message.
+            }
         }
         var month = MONTH.matcher(raw);
         if (month.matches()) {
             try {
-                return LocalDate.of(Integer.parseInt(month.group(1)), Integer.parseInt(month.group(2)), 1);
+                return SourceDate.month(raw, YearMonth.of(
+                    Integer.parseInt(month.group(1)), Integer.parseInt(month.group(2))));
             } catch (DateTimeException ignored) {
                 // Fall through to the same safe coordinate-only validation message.
             }
+        }
+        if ((cell.getCellType() == CellType.NUMERIC
+            || cell.getCellType() == CellType.FORMULA && cell.getCachedFormulaResultType() == CellType.NUMERIC)
+            && DateUtil.isCellDateFormatted(cell)) {
+            return SourceDate.exact(raw, cell.getLocalDateTimeCellValue().toLocalDate());
+        }
+        for (DateTimeFormatter dateFormatter : DATE_FORMATTERS) {
+            try {
+                return SourceDate.exact(raw, LocalDate.parse(raw, dateFormatter));
+            } catch (DateTimeParseException ignored) { }
         }
         throw new BusinessException(ErrorCode.TEMPLATE_INVALID, address.formatAsString() + " 日期格式不正确");
     }
@@ -357,8 +443,20 @@ public class ExcelArchiveReader {
         return matcher.find() ? matcher.group(1) : "";
     }
 
-    private static LocalDate parseDeclarationDate(String raw) {
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日").matcher(raw == null ? "" : raw);
-        return matcher.find() ? LocalDate.of(Integer.parseInt(matcher.group(1)), Integer.parseInt(matcher.group(2)), Integer.parseInt(matcher.group(3))) : null;
+    private static SourceDate parseDeclarationDate(String raw) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+            "(\\d{4})\\s*年(?:\\s*(\\d{1,2})\\s*月(?:\\s*(\\d{1,2})\\s*日)?)?")
+            .matcher(raw == null ? "" : raw);
+        if (!matcher.find()) return SourceDate.empty();
+        int year = Integer.parseInt(matcher.group(1));
+        if (matcher.group(2) == null) {
+            return SourceDate.year(matcher.group(), Year.of(year));
+        }
+        int month = Integer.parseInt(matcher.group(2));
+        if (matcher.group(3) == null) {
+            return SourceDate.month(matcher.group(), YearMonth.of(year, month));
+        }
+        return SourceDate.exact(matcher.group(),
+            LocalDate.of(year, month, Integer.parseInt(matcher.group(3))));
     }
 }
