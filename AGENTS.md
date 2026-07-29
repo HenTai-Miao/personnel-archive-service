@@ -9,6 +9,7 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 - Import decisions use a bounded in-memory parsed-document store, so a service restart intentionally makes an outstanding decision stale and requires re-upload.
 - Literal family ages are copied exactly. The template's exact `DATEDIF(家庭成员年龄计算!D<n>,TODAY(),"y")` formula is evaluated once at import so stale XLSX caches cannot differ from Excel's displayed value; the string is then frozen for persistence, query, display, and export.
 - Desktop folder scanning and source-file moves are intentionally client-side and are implemented by the current client; the service remains authoritative for import success and exposes no local-path API.
+- Spring profile `prod` defaults the HTTP service port to `18080` while preserving `PA_SERVER_PORT` as the deployment override; the shared/local default remains `8080`.
 - Update this section in the same change whenever an endpoint, migration, persistence rule, or supported workflow changes.
 
 ## STACK AND SHAPE
