@@ -402,18 +402,12 @@ public class ExcelArchiveReader {
         String raw = formatter.formatCellValue(cell).strip();
         if (raw.isEmpty()) return SourceDate.empty();
         SourceDate parsed;
-        if ((cell.getCellType() == CellType.NUMERIC
-            || cell.getCellType() == CellType.FORMULA && cell.getCachedFormulaResultType() == CellType.NUMERIC)
-            && DateUtil.isCellDateFormatted(cell)) {
-            LocalDate date = cell.getLocalDateTimeCellValue().toLocalDate();
-            parsed = SourceDate.exact(date.toString(), date);
-        } else {
-            try {
-                parsed = SourceValueNormalizerV3.normalizeDate(raw);
-            } catch (SourceValueNormalizationException exception) {
-                issues.add(issue("DATE_NOT_EXACT", fieldName, sheet, address, DATE_GUIDANCE));
-                return SourceDate.empty();
-            }
+        try {
+            // Excel 数值序列始终带有月和日；必须按用户可见文本解析，避免 yyyy/yyyy-MM 样式制造隐藏精度。
+            parsed = SourceValueNormalizerV3.normalizeDate(raw);
+        } catch (SourceValueNormalizationException exception) {
+            issues.add(issue("DATE_NOT_EXACT", fieldName, sheet, address, DATE_GUIDANCE));
+            return SourceDate.empty();
         }
         if (rejectFuture && parsed.isAfter(LocalDate.now(clock))) {
             issues.add(issue("DATE_IN_FUTURE", fieldName, sheet, address, "出生日期不能晚于当前日期"));

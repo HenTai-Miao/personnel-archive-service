@@ -189,6 +189,35 @@ class ExcelTemplateV1Test {
     }
 
     @Test
+    void readsNumericExcelDatesAtTheirDisplayedPrecision() throws Exception {
+        LocalDate underlyingDate = LocalDate.of(1988, 7, 23);
+        byte[] bytes = workbookBytes(workbook -> {
+            WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, new DataFormatter(Locale.CHINA));
+            XSSFCell monthCell = cell(layout.main(), layout.scalar("birthDate").formatAsString());
+            monthCell.setCellValue(underlyingDate);
+            var monthStyle = workbook.createCellStyle();
+            monthStyle.cloneStyleFrom(monthCell.getCellStyle());
+            monthStyle.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm"));
+            monthCell.setCellStyle(monthStyle);
+
+            XSSFCell yearCell = cell(layout.main(), layout.scalar("politicalJoinDate").formatAsString());
+            yearCell.setCellValue(underlyingDate);
+            var yearStyle = workbook.createCellStyle();
+            yearStyle.cloneStyleFrom(yearCell.getCellStyle());
+            yearStyle.setDataFormat(workbook.createDataFormat().getFormat("yyyy"));
+            yearCell.setCellStyle(yearStyle);
+        });
+
+        ArchiveDocument document = new ExcelArchiveReader(properties()).read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.birthDate()).isEqualTo(
+            SourceDate.month("1988-07", YearMonth.of(1988, 7)));
+        assertThat(document.politicalJoinDate()).isEqualTo(
+            SourceDate.year("1988", Year.of(1988)));
+    }
+
+    @Test
     void canonicalizesChineseDatesRangesAndExactAge() throws Exception {
         byte[] bytes = workbookBytes(workbook -> {
             WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, new DataFormatter(Locale.CHINA));
