@@ -23,7 +23,7 @@
 后端只保留 `dev` 和 `prod` 两个运行环境，不再使用 `local` profile 或工程根下的外置 `config/` 目录：
 
 - `src/main/resources/application.yml`：只保存两个环境共用的应用名、HTTP 端口、上传限制、Jackson、MyBatis、安全期限、Excel 模板和管理员引导占位；设置默认 profile 为 `dev`，不包含数据库 URL、账号或 Flyway 路径。
-- `src/main/resources/application-dev.yml`：激活条件为 `dev`，连接用户现有的本机 MySQL，使用 `classpath:db/migration`。现有本机数据库与加密联调值从 `config/application-local.yml` 迁入，但不复制旧的 `bootstrap-admin` 明文账号密码块；整个过程不创建、不重置 Docker 数据卷。
+- `src/main/resources/application-dev.yml`：激活条件为 `dev`，连接用户现有的本机 MySQL，使用 `classpath:db/migration`。现有 MySQL 连接值和三项本机安全密钥从 `config/application-local.yml` 迁入，但不复制旧的 `bootstrap-admin` 明文账号密码块；固定账号改由 V8 提供。整个过程不创建、不重置 Docker 数据卷。
 - `src/main/resources/application-prod.yml`：激活条件为 `prod`，应用使用 Kingbase JDBC，Flyway 使用指向同一 KingbaseES 数据库的 PostgreSQL JDBC，迁移位置为 `classpath:db/kingbase`；生产秘密继续只从环境变量注入。
 
 删除整个 `config/` 目录，不再保留生产变量示例文件。根 `启动本地测试.command` 改为检查 classpath 下的 `application-dev.yml` 并以 `dev` profile 启动；配置测试、README、`AGENTS.md` 和 `CODE_GUIDE.md` 中的 `local` 服务 profile 与旧路径引用同步改为 `dev`。前端 `.env.local` 仍表示 Vite 本机模式，不属于后端 Spring profile，本次不改名。
