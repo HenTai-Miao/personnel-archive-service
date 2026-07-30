@@ -101,9 +101,17 @@ public class AuthService {
         String refresh = Base64.getUrlEncoder().withoutPadding().encodeToString(refreshBytes);
         Instant refreshExpiresAt = clock.instant().plus(properties.security().refreshTokenTtl());
         Instant accessExpiresAt = clock.instant().plus(properties.security().accessTokenTtl());
-        mapper.insertSession(principal.tenantId(), principal.userId(), tokenHash(refresh), accessExpiresAt, refreshExpiresAt);
-        long sessionId = mapper.lastInsertId();
-        AccessTokenRegistry.IssuedToken access = accessTokens.issue(principal, sessionId);
+        AuthMapper.SessionInsert session = new AuthMapper.SessionInsert();
+        session.tenantId = principal.tenantId();
+        session.userId = principal.userId();
+        session.hash = tokenHash(refresh);
+        session.accessExpiresAt = accessExpiresAt;
+        session.refreshExpiresAt = refreshExpiresAt;
+        mapper.insertSession(session);
+        if (session.id == null) {
+            throw new IllegalStateException("Database did not return the generated session id");
+        }
+        AccessTokenRegistry.IssuedToken access = accessTokens.issue(principal, session.id);
         long expiresIn = properties.security().accessTokenTtl().toSeconds();
         AuthMapper.UserRow user = mapper.findUserById(principal.userId());
         return new TokenResponse(access.value(), refresh, expiresIn,

@@ -173,6 +173,21 @@ class PersonQueryServiceTest {
         verifyNoInteractions(audit);
     }
 
+    @Test
+    void escapesLikeWildcardsWithPortableEscapeCharacter() {
+        PersonReadMapper mapper = mock(PersonReadMapper.class);
+        AuditService audit = mock(AuditService.class);
+        when(mapper.findActivePersons(1, "A!!!%!_", "", "", 0, 20))
+            .thenReturn(List.of());
+        var service = new PersonQueryService(
+            mapper, properties(), audit, mock(IdentityProtection.class));
+
+        service.list("A!%_", "", "", 0, 20, 9);
+
+        verify(mapper).countActivePersons(1, "A!!!%!_", "", "");
+        verify(mapper).findActivePersons(1, "A!!!%!_", "", "", 0, 20);
+    }
+
     private static PersonReadMapper.PersonRow personRow() {
         return new PersonReadMapper.PersonRow(
             7, "E-001", "测试甲", new byte[]{1}, "0012", "女", "2000.01", "汉族",

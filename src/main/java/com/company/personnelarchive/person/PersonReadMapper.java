@@ -22,7 +22,7 @@ public interface PersonReadMapper {
     @Select("SELECT organization_name,department_name,work_start_date,dispatched_to_bidding_company_date,position_name,professional_title_or_skill,title_or_skill_acquired_date FROM pa_employment WHERE tenant_id=#{tenantId} AND person_id=#{personId}")
     EmploymentRow findEmployment(@Param("tenantId") long tenantId, @Param("personId") long personId);
 
-    @Select("SELECT education_type,institution_name,department_and_major,education_level,degree_name,start_date,end_date,raw_text,sort_order FROM pa_education WHERE tenant_id=#{tenantId} AND person_id=#{personId} ORDER BY FIELD(education_type,'FULL_TIME','IN_SERVICE','MAIN'),sort_order")
+    @Select("SELECT education_type,institution_name,department_and_major,education_level,degree_name,start_date,end_date,raw_text,sort_order FROM pa_education WHERE tenant_id=#{tenantId} AND person_id=#{personId} ORDER BY CASE education_type WHEN 'FULL_TIME' THEN 1 WHEN 'IN_SERVICE' THEN 2 WHEN 'MAIN' THEN 3 ELSE 4 END,sort_order")
     List<EducationRow> findEducation(@Param("tenantId") long tenantId, @Param("personId") long personId);
 
     @Select("SELECT start_date,end_date,organization_and_position,raw_text,sort_order FROM pa_work_experience WHERE tenant_id=#{tenantId} AND person_id=#{personId} ORDER BY sort_order")
@@ -46,10 +46,10 @@ public interface PersonReadMapper {
         FROM pa_person p
         LEFT JOIN pa_employment e ON e.person_id=p.id AND e.tenant_id=p.tenant_id
         WHERE p.tenant_id=#{tenantId} AND p.is_deleted=0
-          AND (#{escapedName}='' OR p.normalized_name LIKE CONCAT('%',#{escapedName},'%') ESCAPE '\\\\')
-          AND (#{escapedEmployeeNo}='' OR p.employee_no LIKE CONCAT('%',#{escapedEmployeeNo},'%') ESCAPE '\\\\')
-          AND (#{escapedDepartment}='' OR e.organization_name LIKE CONCAT('%',#{escapedDepartment},'%') ESCAPE '\\\\'
-               OR e.department_name LIKE CONCAT('%',#{escapedDepartment},'%') ESCAPE '\\\\')
+          AND (#{escapedName}='' OR p.normalized_name LIKE CONCAT('%',#{escapedName},'%') ESCAPE '!')
+          AND (#{escapedEmployeeNo}='' OR p.employee_no LIKE CONCAT('%',#{escapedEmployeeNo},'%') ESCAPE '!')
+          AND (#{escapedDepartment}='' OR e.organization_name LIKE CONCAT('%',#{escapedDepartment},'%') ESCAPE '!'
+               OR e.department_name LIKE CONCAT('%',#{escapedDepartment},'%') ESCAPE '!')
         ORDER BY p.updated_at DESC,p.id DESC
         LIMIT #{limit} OFFSET #{offset}
         """)
@@ -64,10 +64,10 @@ public interface PersonReadMapper {
         FROM pa_person p
         LEFT JOIN pa_employment e ON e.person_id=p.id AND e.tenant_id=p.tenant_id
         WHERE p.tenant_id=#{tenantId} AND p.is_deleted=0
-          AND (#{escapedName}='' OR p.normalized_name LIKE CONCAT('%',#{escapedName},'%') ESCAPE '\\\\')
-          AND (#{escapedEmployeeNo}='' OR p.employee_no LIKE CONCAT('%',#{escapedEmployeeNo},'%') ESCAPE '\\\\')
-          AND (#{escapedDepartment}='' OR e.organization_name LIKE CONCAT('%',#{escapedDepartment},'%') ESCAPE '\\\\'
-               OR e.department_name LIKE CONCAT('%',#{escapedDepartment},'%') ESCAPE '\\\\')
+          AND (#{escapedName}='' OR p.normalized_name LIKE CONCAT('%',#{escapedName},'%') ESCAPE '!')
+          AND (#{escapedEmployeeNo}='' OR p.employee_no LIKE CONCAT('%',#{escapedEmployeeNo},'%') ESCAPE '!')
+          AND (#{escapedDepartment}='' OR e.organization_name LIKE CONCAT('%',#{escapedDepartment},'%') ESCAPE '!'
+               OR e.department_name LIKE CONCAT('%',#{escapedDepartment},'%') ESCAPE '!')
         """)
     long countActivePersons(@Param("tenantId") long tenantId,
                             @Param("escapedName") String escapedName,
@@ -80,7 +80,7 @@ public interface PersonReadMapper {
         FROM pa_family_member f
         JOIN pa_person p ON p.id=f.person_id AND p.tenant_id=f.tenant_id AND p.is_deleted=0
         LEFT JOIN pa_employment e ON e.person_id=p.id AND e.tenant_id=p.tenant_id
-        WHERE f.tenant_id=#{tenantId} AND f.normalized_member_name LIKE CONCAT('%',#{escapedName},'%') ESCAPE '\\\\'
+        WHERE f.tenant_id=#{tenantId} AND f.normalized_member_name LIKE CONCAT('%',#{escapedName},'%') ESCAPE '!'
         ORDER BY p.person_name,p.id,f.sort_order
         LIMIT #{limit} OFFSET #{offset}
         """)
@@ -90,7 +90,7 @@ public interface PersonReadMapper {
     @Select("""
         SELECT COUNT(*) FROM pa_family_member f
         JOIN pa_person p ON p.id=f.person_id AND p.tenant_id=f.tenant_id AND p.is_deleted=0
-        WHERE f.tenant_id=#{tenantId} AND f.normalized_member_name LIKE CONCAT('%',#{escapedName},'%') ESCAPE '\\\\'
+        WHERE f.tenant_id=#{tenantId} AND f.normalized_member_name LIKE CONCAT('%',#{escapedName},'%') ESCAPE '!'
         """)
     long countFamily(@Param("tenantId") long tenantId, @Param("escapedName") String escapedName);
 

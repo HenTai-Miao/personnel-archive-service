@@ -124,7 +124,7 @@ public class PersonQueryService {
     }
 
     private static String escapeLike(String input) {
-        return input.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return input.replace("!", "!!").replace("%", "!%").replace("_", "!_");
     }
 
     private static PersonDtos.PersonalInfo personal(PersonReadMapper.PersonRow person) {

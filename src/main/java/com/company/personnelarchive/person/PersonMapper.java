@@ -38,20 +38,20 @@ public interface PersonMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insertPerson(PersonInsert row);
 
-    @Update("UPDATE pa_person SET is_deleted=1,deleted_at=CURRENT_TIMESTAMP(6),deleted_by=#{operatorId},delete_reason='IMPORT_OVERWRITE',updated_by=#{operatorId} WHERE id=#{personId} AND is_deleted=0 AND snapshot_version=#{snapshotVersion}")
+    @Update("UPDATE pa_person SET is_deleted=1,deleted_at=CURRENT_TIMESTAMP(6),deleted_by=#{operatorId},delete_reason='IMPORT_OVERWRITE',updated_by=#{operatorId},updated_at=CURRENT_TIMESTAMP(6) WHERE id=#{personId} AND is_deleted=0 AND snapshot_version=#{snapshotVersion}")
     int softDeleteForOverwrite(@Param("personId") long personId, @Param("snapshotVersion") long snapshotVersion,
                                @Param("operatorId") long operatorId);
 
     @Update("""
         UPDATE pa_person
         SET is_deleted=1,deleted_at=CURRENT_TIMESTAMP(6),deleted_by=#{operatorId},
-            delete_reason=#{reason},updated_by=#{operatorId}
+            delete_reason=#{reason},updated_by=#{operatorId},updated_at=CURRENT_TIMESTAMP(6)
         WHERE tenant_id=#{tenantId} AND id=#{personId} AND is_deleted=0
         """)
     int softDeleteActive(@Param("tenantId") long tenantId, @Param("personId") long personId,
                          @Param("operatorId") long operatorId, @Param("reason") String reason);
 
-    @Update("UPDATE pa_person SET replaced_by_person_id=#{newPersonId},updated_by=#{operatorId} WHERE id=#{oldPersonId} AND is_deleted=1")
+    @Update("UPDATE pa_person SET replaced_by_person_id=#{newPersonId},updated_by=#{operatorId},updated_at=CURRENT_TIMESTAMP(6) WHERE id=#{oldPersonId} AND is_deleted=1")
     int linkReplacement(@Param("oldPersonId") long oldPersonId, @Param("newPersonId") long newPersonId,
                         @Param("operatorId") long operatorId);
 

@@ -3,6 +3,7 @@ package com.company.personnelarchive.auth;
 
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -22,12 +23,8 @@ public interface AuthMapper {
     List<String> findRoles(long userId);
 
     @Insert("INSERT INTO sys_user_session (tenant_id,user_id,refresh_token_hash,issued_at,access_expires_at,refresh_expires_at,created_at,last_used_at) VALUES (#{tenantId},#{userId},#{hash},CURRENT_TIMESTAMP(6),#{accessExpiresAt},#{refreshExpiresAt},CURRENT_TIMESTAMP(6),CURRENT_TIMESTAMP(6))")
-    int insertSession(@Param("tenantId") long tenantId, @Param("userId") long userId,
-                      @Param("hash") byte[] hash, @Param("accessExpiresAt") Instant accessExpiresAt,
-                      @Param("refreshExpiresAt") Instant refreshExpiresAt);
-
-    @Select("SELECT LAST_INSERT_ID()")
-    long lastInsertId();
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int insertSession(SessionInsert row);
 
     @Select("SELECT id,tenant_id,user_id,refresh_token_hash,refresh_expires_at,revoked_at FROM sys_user_session WHERE refresh_token_hash=#{hash} FOR UPDATE")
     SessionRow lockSession(byte[] hash);
@@ -38,8 +35,8 @@ public interface AuthMapper {
     @Update("UPDATE sys_user SET last_login_at=CURRENT_TIMESTAMP(6),updated_at=CURRENT_TIMESTAMP(6) WHERE id=#{userId}")
     int touchLogin(long userId);
 
-    @Update("UPDATE sys_user SET failed_login_count=failed_login_count+1,locked_until=CASE WHEN failed_login_count+1>=5 THEN DATE_ADD(CURRENT_TIMESTAMP(6),INTERVAL 15 MINUTE) ELSE locked_until END,updated_at=CURRENT_TIMESTAMP(6) WHERE id=#{userId}")
-    int recordFailedLogin(long userId);
+    @Update("UPDATE sys_user SET failed_login_count=failed_login_count+1,locked_until=CASE WHEN failed_login_count+1>=5 THEN #{lockedUntil} ELSE locked_until END,updated_at=CURRENT_TIMESTAMP(6) WHERE id=#{userId}")
+    int recordFailedLogin(@Param("userId") long userId, @Param("lockedUntil") Instant lockedUntil);
 
     @Update("UPDATE sys_user SET failed_login_count=0,locked_until=NULL,last_login_at=CURRENT_TIMESTAMP(6),updated_at=CURRENT_TIMESTAMP(6) WHERE id=#{userId}")
     int recordSuccessfulLogin(long userId);
@@ -47,4 +44,13 @@ public interface AuthMapper {
     record UserRow(long id, long tenantId, String username, String passwordHash, String displayName, boolean enabled,
                    int failedLoginCount, Instant lockedUntil) {}
     record SessionRow(long id, long tenantId, long userId, byte[] refreshTokenHash, Instant refreshExpiresAt, Instant revokedAt) {}
+
+    class SessionInsert {
+        public Long id;
+        public long tenantId;
+        public long userId;
+        public byte[] hash;
+        public Instant accessExpiresAt;
+        public Instant refreshExpiresAt;
+    }
 }

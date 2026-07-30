@@ -28,7 +28,8 @@ public interface ImportMapper {
             WHEN EXISTS(SELECT 1 FROM pa_import_item i WHERE i.batch_id=b.id AND i.item_status='PENDING_DECISION') THEN 'AWAITING_DECISION'
             WHEN EXISTS(SELECT 1 FROM pa_import_item i WHERE i.batch_id=b.id AND i.item_status='FAILED') THEN 'COMPLETED_WITH_ERRORS'
             ELSE 'COMPLETED' END,
-          completed_at=CASE WHEN EXISTS(SELECT 1 FROM pa_import_item i WHERE i.batch_id=b.id AND i.item_status='PENDING_DECISION') THEN NULL ELSE CURRENT_TIMESTAMP(6) END
+          completed_at=CASE WHEN EXISTS(SELECT 1 FROM pa_import_item i WHERE i.batch_id=b.id AND i.item_status='PENDING_DECISION') THEN NULL ELSE CURRENT_TIMESTAMP(6) END,
+          updated_at=CURRENT_TIMESTAMP(6)
         WHERE b.id=#{batchId}
         """)
     int refreshBatch(long batchId);
@@ -77,7 +78,7 @@ public interface ImportMapper {
     @Update("""
         UPDATE pa_import_item SET item_status=#{status},result_code=#{resultCode},result_message=#{message},
           imported_person_id=#{personId},decision=#{decision},decided_at=CURRENT_TIMESTAMP(6),decided_by=#{operatorId},
-          decision_expires_at=NULL,processed_at=CURRENT_TIMESTAMP(6)
+          decision_expires_at=NULL,processed_at=CURRENT_TIMESTAMP(6),updated_at=CURRENT_TIMESTAMP(6)
         WHERE id=#{itemId} AND item_status='PENDING_DECISION'
         """)
     int completeDecision(@Param("itemId") long itemId, @Param("status") String status,
