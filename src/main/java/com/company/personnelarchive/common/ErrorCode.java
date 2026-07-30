@@ -14,6 +14,7 @@ public enum ErrorCode {
     FILE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "文件超过大小限制"),
     BATCH_EXPORT_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "批量导出内容超过大小限制"),
     TEMPLATE_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "档案模板结构不正确"),
+    IMPORT_FIELD_VALIDATION_FAILED(HttpStatus.UNPROCESSABLE_ENTITY, "年龄或日期字段填写不正确"),
     TEMPLATE_CAPACITY_EXCEEDED(HttpStatus.UNPROCESSABLE_ENTITY, "档案内容超过模板容量"),
     INVALID_IDENTITY_CARD(HttpStatus.UNPROCESSABLE_ENTITY, "身份证号格式或校验位不正确"),
     DUPLICATE_REQUIRES_DECISION(HttpStatus.CONFLICT, "档案已存在，请选择覆盖或跳过"),

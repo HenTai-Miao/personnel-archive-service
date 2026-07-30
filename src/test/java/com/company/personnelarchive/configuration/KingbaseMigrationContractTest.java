@@ -12,6 +12,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KingbaseMigrationContractTest {
     private static final Path MIGRATION = Path.of(
         "src/main/resources/db/kingbase/V7__kingbase_initial_schema.sql");
+    private static final Path SOURCE_VALUE_PROJECTIONS = Path.of(
+        "src/main/resources/db/kingbase/V9__add_structured_source_value_projections.sql");
+    private static final Path MIXED_DATE_BACKFILL = Path.of(
+        "src/main/java/db/kingbase/V11__backfill_mixed_delimited_date_projections.java");
+    private static final Path RESULT_MESSAGE_EXPANSION = Path.of(
+        "src/main/resources/db/kingbase/V12__expand_import_result_message.sql");
+    private static final Path CANONICAL_VALUE_BACKFILL = Path.of(
+        "src/main/java/db/kingbase/V13__canonicalize_active_age_and_date_values.java");
+    private static final Path OPEN_ENDED_RANGE_TEXT_BACKFILL = Path.of(
+        "src/main/java/db/kingbase/V14__canonicalize_open_ended_range_text.java");
     private static final List<String> TABLES = List.of(
         "sys_tenant", "sys_user", "sys_role", "sys_user_role", "sys_user_session",
         "pa_person", "pa_employment", "pa_education", "pa_work_experience",
@@ -78,9 +88,86 @@ class KingbaseMigrationContractTest {
             .contains("ALTER TABLE sys_role ALTER COLUMN id RESTART WITH 4");
     }
 
+    @Test
+    void addsNullableStructuredSourceValueProjectionsWithPortableConstraints() throws IOException {
+        String sql = Files.readString(SOURCE_VALUE_PROJECTIONS);
+
+        assertProjectionColumns(sql, "birth_date", "political_join_date", "declaration_date",
+            "work_start_date", "dispatched_to_bidding_company_date", "title_or_skill_acquired_date",
+            "start_date", "end_date", "occurred_date");
+        assertThat(sql)
+            .contains("age_value SMALLINT NULL")
+            .contains("CONSTRAINT ck_pa_person_birth_date_parts CHECK")
+            .contains("CONSTRAINT ck_pa_family_member_age_value CHECK (age_value IS NULL OR age_value >= 0)")
+            .doesNotContain("TINYINT")
+            .doesNotContain("ENGINE=InnoDB")
+            .doesNotContain("AUTO_INCREMENT");
+    }
+
+    @Test
+    void exposesTheKingbaseV10JavaBackfillAtTheConfiguredClasspathLocation() {
+        var migration = new db.kingbase.V10__backfill_structured_source_values();
+
+        assertThat(migration.getVersion().toString()).isEqualTo("10");
+        assertThat(migration.getChecksum()).isEqualTo(10_001);
+    }
+
+    @Test
+    void exposesTheKingbaseV11JavaBackfillAtTheConfiguredClasspathLocation() throws IOException {
+        var migration = new db.kingbase.V11__backfill_mixed_delimited_date_projections();
+        String source = Files.readString(MIXED_DATE_BACKFILL);
+
+        assertThat(migration.getVersion().toString()).isEqualTo("11");
+        assertThat(migration.getChecksum()).isEqualTo(11_001);
+        assertThat(source).contains(
+            "StructuredSourceValueBackfillV2.migrate(context.getConnection())");
+    }
+
+    @Test
+    void expandsPersistentImportMessagesToKingbaseText() throws IOException {
+        assertThat(Files.readString(RESULT_MESSAGE_EXPANSION))
+            .contains("ALTER TABLE pa_import_item")
+            .contains("ALTER COLUMN result_message TYPE TEXT")
+            .doesNotContain("LONGTEXT");
+    }
+
+    @Test
+    void exposesTheKingbaseV13CanonicalBackfillAtTheConfiguredClasspathLocation() throws IOException {
+        var migration = new db.kingbase.V13__canonicalize_active_age_and_date_values();
+        String source = Files.readString(CANONICAL_VALUE_BACKFILL);
+
+        assertThat(migration.getVersion().toString()).isEqualTo("13");
+        assertThat(migration.getChecksum()).isEqualTo(13_001);
+        assertThat(source).contains("CanonicalSourceValueBackfillV3.migrate(context.getConnection())");
+    }
+
+    @Test
+    void exposesTheKingbaseV14OpenEndedRangeBackfillAtTheConfiguredClasspathLocation()
+        throws IOException, ReflectiveOperationException {
+        assertThat(Files.exists(OPEN_ENDED_RANGE_TEXT_BACKFILL)).isTrue();
+        String source = Files.readString(OPEN_ENDED_RANGE_TEXT_BACKFILL);
+        Object migration = Class.forName("db.kingbase.V14__canonicalize_open_ended_range_text")
+            .getDeclaredConstructor().newInstance();
+
+        assertThat(migration).isInstanceOf(org.flywaydb.core.api.migration.BaseJavaMigration.class);
+        var javaMigration = (org.flywaydb.core.api.migration.BaseJavaMigration) migration;
+        assertThat(javaMigration.getVersion().toString()).isEqualTo("14");
+        assertThat(javaMigration.getChecksum()).isEqualTo(14_001);
+        assertThat(source).contains("OpenEndedRangeTextBackfillV4.migrate(context.getConnection())");
+    }
+
     private static void assertColumnsAreVarchar64(String table, String... columns) {
         for (String column : columns) {
             assertThat(table).contains(column + " VARCHAR(64) NULL");
+        }
+    }
+
+    private static void assertProjectionColumns(String sql, String... sourceColumns) {
+        for (String sourceColumn : sourceColumns) {
+            assertThat(sql)
+                .contains(sourceColumn + "_year SMALLINT NULL")
+                .contains(sourceColumn + "_month SMALLINT NULL")
+                .contains(sourceColumn + "_day SMALLINT NULL");
         }
     }
 

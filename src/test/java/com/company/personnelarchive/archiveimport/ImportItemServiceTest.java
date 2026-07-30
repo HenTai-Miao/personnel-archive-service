@@ -105,6 +105,41 @@ class ImportItemServiceTest {
     }
 
     @Test
+    void persistsAndReturnsTheSpecificFieldValidationMessage() {
+        String message = "家庭成员第 1 行年龄导入失败（基本情况!D39）：必须填写精确年龄";
+        doAnswer(invocation -> {
+            ((ImportMapper.ItemInsert) invocation.getArgument(0)).id = 16L;
+            return 1;
+        }).when(imports).insertItem(any());
+
+        ImportDtos.ItemResult result = service.recordFailure(
+            5, 1, "fixture.xlsx", new byte[]{1, 2},
+            ErrorCode.IMPORT_FIELD_VALIDATION_FAILED, message, 9);
+
+        assertThat(result.status()).isEqualTo("FAILED");
+        assertThat(result.code()).isEqualTo("IMPORT_FIELD_VALIDATION_FAILED");
+        assertThat(result.message()).isEqualTo(message);
+        var inserted = org.mockito.ArgumentCaptor.forClass(ImportMapper.ItemInsert.class);
+        verify(imports).insertItem(inserted.capture());
+        assertThat(inserted.getValue().resultCode).isEqualTo("IMPORT_FIELD_VALIDATION_FAILED");
+        assertThat(inserted.getValue().message).isEqualTo(message);
+    }
+
+    @Test
+    void fieldValidationStopsBeforePreparingOrWritingTheSnapshot() {
+        when(reader.read(any(), anyLong(), any())).thenThrow(new BusinessException(
+            ErrorCode.IMPORT_FIELD_VALIDATION_FAILED,
+            "出生年月导入失败（基本情况!F3）：必须填写明确日期"));
+
+        assertThatThrownBy(() -> service.precheck(
+            5, 1, "fixture.xlsx", new byte[]{1, 2}, 9))
+            .isInstanceOfSatisfying(BusinessException.class,
+                exception -> assertThat(exception.code())
+                    .isEqualTo(ErrorCode.IMPORT_FIELD_VALIDATION_FAILED));
+        verifyNoInteractions(writer);
+    }
+
+    @Test
     void duplicatePrecheckWritesOnlyPendingMetadata() {
         PersonMapper.ActivePerson active = new PersonMapper.ActivePerson(7, "T-000", "测试甲", "测试甲",
             new byte[]{1, 2, 3}, "0012", 3, Instant.parse("2026-07-21T00:00:00Z"));

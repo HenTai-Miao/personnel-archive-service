@@ -25,11 +25,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.DateTimeException;
 import java.time.Period;
-import java.time.Year;
-import java.time.YearMonth;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -47,18 +43,14 @@ import javax.imageio.ImageIO;
  */
 public class ExcelArchiveReader {
     private static final byte[] ZIP_SIGNATURE = {0x50, 0x4b, 0x03, 0x04};
-    private static final List<DateTimeFormatter> DATE_FORMATTERS = List.of(
-        DateTimeFormatter.ISO_LOCAL_DATE,
-        DateTimeFormatter.ofPattern("yyyy/M/d"),
-        DateTimeFormatter.ofPattern("yyyy.M.d"),
-        DateTimeFormatter.ofPattern("yyyy年M月d日")
-    );
-    private static final Pattern YEAR = Pattern.compile("^(\\d{4})(?:年)?$");
-    private static final Pattern MONTH = Pattern.compile("^(\\d{4})(?:[./-]|年)(\\d{1,2})(?:月)?$");
-    private static final String PARTIAL_DATE =
-        "\\d{4}(?:(?:[./-]\\d{1,2})(?:[./-]\\d{1,2})?|年(?:\\d{1,2}月(?:\\d{1,2}日)?)?)?";
-    private static final Pattern DATE_RANGE = Pattern.compile(
-        "^(" + PARTIAL_DATE + ")\\s*(?:-|—|–|~|至)\\s*(" + PARTIAL_DATE + "|至今|现在|今)$");
+    private static final Pattern DECLARATION_TIME = Pattern.compile("时间[：:]\\s*(.*?)\\s*$");
+    private static final Pattern EMPTY_DECLARATION_DATE =
+        Pattern.compile("^[\\s\\p{Zs}]*年[\\s\\p{Zs}]*月[\\s\\p{Zs}]*日[\\s\\p{Zs}]*$");
+    private static final String DATE_GUIDANCE =
+        "必须填写明确且有效的日期，例如 2024、2024-05 或 2024-05-03";
+    private static final String DATE_RANGE_GUIDANCE =
+        "必须填写明确且有效的日期或日期区间，例如 2024、1996.09-1999.06 或 2019.03至今";
+    private static final String AGE_GUIDANCE = "必须填写精确年龄，例如 35 或 三十五岁";
     private static final Pattern AGE_FORMULA = Pattern.compile(
         "^\\s*DATEDIF\\s*\\(\\s*(?:'" + Pattern.quote(ExcelTemplateV1.AGE_SHEET) + "'|"
             + Pattern.quote(ExcelTemplateV1.AGE_SHEET)
@@ -117,25 +109,32 @@ public class ExcelArchiveReader {
     private ArchiveDocument map(XSSFWorkbook workbook, String filename) {
         WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, formatter);
         XSSFSheet sheet = layout.main();
-        List<ArchiveDocument.OrderedText> education = readTextRows(sheet, layout.educationRow(), layout.workRow());
-        List<ArchiveDocument.OrderedText> work = readTextRows(sheet, layout.workRow(), layout.rewardRow());
-        List<ArchiveDocument.OrderedText> rewards = readTextRows(sheet, layout.rewardRow(), layout.familyHeaderRow());
-        List<ArchiveDocument.FamilyMember> family = readFamily(layout);
+        WorkbookFieldIssues issues = new WorkbookFieldIssues();
+        List<ArchiveDocument.OrderedText> education = readTextRows(
+            sheet, layout.educationRow(), layout.workRow(), "主要学历", issues);
+        List<ArchiveDocument.OrderedText> work = readTextRows(
+            sheet, layout.workRow(), layout.rewardRow(), "工作经历", issues);
+        List<ArchiveDocument.OrderedText> rewards = readTextRows(
+            sheet, layout.rewardRow(), layout.familyHeaderRow(), "奖惩情况", issues);
+        List<ArchiveDocument.FamilyMember> family = readFamily(layout, issues);
         ArchiveDocument.Photo photo = extractPhoto(workbook, filename);
         String declaration = joinNonBlank(sheet, layout.declarationValueRow(), 0, 8);
         ArchiveDocument document = new ArchiveDocument(
             text(sheet, layout.scalar("employeeNo")), text(sheet, layout.scalar("name")),
             text(sheet, layout.scalar("identityCard")), text(sheet, layout.scalar("gender")),
-            parseDate(sheet, layout.scalar("birthDate")), text(sheet, layout.scalar("ethnicity")),
+            parseDate(sheet, layout.scalar("birthDate"), "出生年月", issues, true),
+            text(sheet, layout.scalar("ethnicity")),
             text(sheet, layout.scalar("nativePlace")), text(sheet, layout.scalar("birthPlace")),
-            text(sheet, layout.scalar("politicalStatus")), parseDate(sheet, layout.scalar("politicalJoinDate")),
+            text(sheet, layout.scalar("politicalStatus")),
+            parseDate(sheet, layout.scalar("politicalJoinDate"), "入党团时间", issues, false),
             text(sheet, layout.scalar("maritalStatus")), text(sheet, layout.scalar("healthStatus")),
             text(sheet, layout.scalar("address")), text(sheet, layout.scalar("postalCode")),
             text(sheet, layout.scalar("phone")),
             new ArchiveDocument.Employment(text(sheet, layout.scalar("organizationDepartment")),
-                parseDate(sheet, layout.scalar("workStartDate")), parseDate(sheet, layout.scalar("dispatchDate")),
+                parseDate(sheet, layout.scalar("workStartDate"), "参加工作时间", issues, false),
+                parseDate(sheet, layout.scalar("dispatchDate"), "派遣时间", issues, false),
                 text(sheet, layout.scalar("position")), text(sheet, layout.scalar("titleSkill")),
-                parseDate(sheet, layout.scalar("titleObtainedDate"))),
+                parseDate(sheet, layout.scalar("titleObtainedDate"), "职称取得时间", issues, false)),
             new ArchiveDocument.EducationSummary(text(sheet, layout.scalar("fullTimeSchool")),
                 text(sheet, layout.scalar("fullTimeEducation")), text(sheet, layout.scalar("fullTimeMajor")),
                 text(sheet, layout.scalar("fullTimeDegree"))),
@@ -143,28 +142,48 @@ public class ExcelArchiveReader {
                 text(sheet, layout.scalar("inServiceEducation")), text(sheet, layout.scalar("inServiceMajor")),
                 text(sheet, layout.scalar("inServiceDegree"))),
             education, work, rewards, family, photo, parseDeclarationSigner(declaration),
-            parseDeclarationDate(declaration)
+            parseDeclarationDate(sheet, declaration, new CellAddress(layout.declarationValueRow(), 1), issues)
         );
+        issues.throwIfAny();
         document.validateCapacity();
         return document;
     }
 
-    private List<ArchiveDocument.OrderedText> readTextRows(XSSFSheet sheet, int first, int lastExclusive) {
+    private List<ArchiveDocument.OrderedText> readTextRows(
+        XSSFSheet sheet, int first, int lastExclusive, String sectionName, WorkbookFieldIssues issues
+    ) {
         List<ArchiveDocument.OrderedText> rows = new ArrayList<>();
         for (int row = first; row < lastExclusive; row++) {
             String left = joinNonBlank(sheet, row, 1, 2);
             String right = joinNonBlank(sheet, row, 3, 8);
-            // raw_text 和原始行序是无损导出的依据；解析出的日期只用于结构化查询，不能替代原文。
             String raw = left.isBlank() ? right : right.isBlank() ? left : left + "\t" + right;
             if (!raw.isBlank()) {
-                DateRange range = parseDateRange(left);
-                rows.add(new ArchiveDocument.OrderedText(rows.size(), left, right, raw, range.start(), range.end()));
+                String normalizedLeft = left;
+                String start = null;
+                String end = null;
+                if (!left.isBlank()) {
+                    try {
+                        var range = SourceValueNormalizerV4.normalizeDateRange(left);
+                        normalizedLeft = range.text();
+                        start = blankToNull(range.start().text());
+                        end = blankToNull(range.end().text());
+                    } catch (SourceValueNormalizationException exception) {
+                        issues.add(issue("DATE_NOT_EXACT", sectionName + "第 " + (rows.size() + 1) + " 行日期",
+                            sheet, new CellAddress(row, 1), DATE_RANGE_GUIDANCE));
+                    }
+                }
+                String normalizedRaw = normalizedLeft.isBlank()
+                    ? right : right.isBlank() ? normalizedLeft : normalizedLeft + "\t" + right;
+                rows.add(new ArchiveDocument.OrderedText(
+                    rows.size(), normalizedLeft, right, normalizedRaw, start, end));
             }
         }
         return rows;
     }
 
-    private List<ArchiveDocument.FamilyMember> readFamily(WorkbookLayoutV1 layout) {
+    private List<ArchiveDocument.FamilyMember> readFamily(
+        WorkbookLayoutV1 layout, WorkbookFieldIssues issues
+    ) {
         List<HelperFamilyRow> helperRows = readHelperRows(layout);
         Set<Integer> usedHelperRows = new HashSet<>();
         List<ArchiveDocument.FamilyMember> family = new ArrayList<>();
@@ -173,32 +192,45 @@ public class ExcelArchiveReader {
             String name = text(layout.main(), row, 2);
             String political = text(layout.main(), row, 4);
             String workplace = joinNonBlank(layout.main(), row, 5, 8);
-            String age = familyAgeText(layout, row);
+            int memberNumber = family.size() + 1;
+            String age = familyAgeText(layout, row, memberNumber, issues);
             if (String.join("", relationship, name, age, political, workplace).isBlank()
                 && !isFormula(layout.main(), row, 3)) {
                 continue;
             }
-            SourceDate birthDate = resolveFamilyBirthDate(layout, row, relationship, name, helperRows, usedHelperRows);
+            SourceDate birthDate = resolveFamilyBirthDate(
+                layout, row, memberNumber, relationship, name, helperRows, usedHelperRows, issues);
             family.add(new ArchiveDocument.FamilyMember(family.size(), relationship, name, birthDate,
                 age, political, workplace));
         }
         return family;
     }
 
-    private String familyAgeText(WorkbookLayoutV1 layout, int mainRow) {
+    private String familyAgeText(
+        WorkbookLayoutV1 layout, int mainRow, int memberNumber, WorkbookFieldIssues issues
+    ) {
         Cell ageCell = cell(layout.main(), mainRow, 3);
         String savedValue = text(layout.main(), mainRow, 3);
-        if (ageCell == null || ageCell.getCellType() != CellType.FORMULA) return savedValue;
-
-        var formula = AGE_FORMULA.matcher(ageCell.getCellFormula());
-        if (!formula.matches()) return savedValue;
-        int helperRow = Integer.parseInt(formula.group(1)) - 1;
-        LocalDate startDate = formulaStartDate(layout, helperRow);
-        LocalDate today = LocalDate.now(clock);
-        if (startDate == null || startDate.isAfter(today)) return savedValue;
-
-        // 只冻结工作簿明确给出的 DATEDIF(...,TODAY(),"y") 结果；查询、展示和导出不再计算。
-        return Integer.toString(Period.between(startDate, today).getYears());
+        String candidate = savedValue;
+        if (ageCell != null && ageCell.getCellType() == CellType.FORMULA) {
+            var formula = AGE_FORMULA.matcher(ageCell.getCellFormula());
+            if (formula.matches()) {
+                int helperRow = Integer.parseInt(formula.group(1)) - 1;
+                LocalDate startDate = formulaStartDate(layout, helperRow);
+                LocalDate today = LocalDate.now(clock);
+                if (startDate != null && !startDate.isAfter(today)) {
+                    // 只执行模板明确允许的 DATEDIF，并立即冻结为标准整数文本。
+                    candidate = Integer.toString(Period.between(startDate, today).getYears());
+                }
+            }
+        }
+        try {
+            return SourceValueNormalizerV3.normalizeAge(candidate).text();
+        } catch (SourceValueNormalizationException exception) {
+            issues.add(issue("AGE_NOT_EXACT", "家庭成员第 " + memberNumber + " 行年龄",
+                layout.main(), new CellAddress(mainRow, 3), AGE_GUIDANCE));
+            return "";
+        }
     }
 
     private static LocalDate formulaStartDate(WorkbookLayoutV1 layout, int helperRow) {
@@ -215,12 +247,11 @@ public class ExcelArchiveReader {
         if (valueType != CellType.STRING) return null;
         String raw = cell.getStringCellValue().strip();
         if (raw.isEmpty()) return LocalDate.of(1899, 12, 30);
-        for (DateTimeFormatter dateFormatter : DATE_FORMATTERS) {
-            try {
-                return LocalDate.parse(raw, dateFormatter);
-            } catch (DateTimeParseException ignored) { }
+        try {
+            return SourceValueParserV2.parseDate(raw).exactDate();
+        } catch (DateTimeException ignored) {
+            return null;
         }
-        return null;
     }
 
     private List<HelperFamilyRow> readHelperRows(WorkbookLayoutV1 layout) {
@@ -237,9 +268,11 @@ public class ExcelArchiveReader {
         return rows;
     }
 
-    private SourceDate resolveFamilyBirthDate(WorkbookLayoutV1 layout, int mainRow, String relationship,
-                                              String name, List<HelperFamilyRow> helpers,
-                                              Set<Integer> usedHelperRows) {
+    private SourceDate resolveFamilyBirthDate(
+        WorkbookLayoutV1 layout, int mainRow, int memberNumber, String relationship,
+        String name, List<HelperFamilyRow> helpers, Set<Integer> usedHelperRows,
+        WorkbookFieldIssues issues
+    ) {
         Cell ageCell = cell(layout.main(), mainRow, 3);
         if (ageCell != null && ageCell.getCellType() == CellType.FORMULA) {
             var reference = AGE_FORMULA.matcher(ageCell.getCellFormula());
@@ -248,7 +281,8 @@ public class ExcelArchiveReader {
                 return helpers.stream().filter(helper -> helper.row() == referencedRow).findFirst()
                     .map(helper -> {
                         usedHelperRows.add(helper.row());
-                        return parseDate(layout.helper(), helper.dateAddress());
+                        return parseDate(layout.helper(), helper.dateAddress(),
+                            "家庭成员第 " + memberNumber + " 行出生年月", issues, true);
                     }).orElse(SourceDate.empty());
             }
         }
@@ -264,55 +298,11 @@ public class ExcelArchiveReader {
         if (matches.size() != 1) return SourceDate.empty();
         HelperFamilyRow match = matches.getFirst();
         usedHelperRows.add(match.row());
-        return parseDate(layout.helper(), match.dateAddress());
+        return parseDate(layout.helper(), match.dateAddress(),
+            "家庭成员第 " + memberNumber + " 行出生年月", issues, true);
     }
 
     private record HelperFamilyRow(int row, String relationship, String name, CellAddress dateAddress) {}
-
-    private static DateRange parseDateRange(String raw) {
-        if (raw == null || raw.isBlank()) return DateRange.EMPTY;
-        String value = raw.strip();
-        var range = DATE_RANGE.matcher(value);
-        if (range.matches()) {
-            try {
-                validatePartialDate(range.group(1));
-                if (!Set.of("至今", "现在", "今").contains(range.group(2))) validatePartialDate(range.group(2));
-                return new DateRange(range.group(1), range.group(2));
-            } catch (DateTimeException ignored) {
-                return DateRange.EMPTY;
-            }
-        }
-        try {
-            validatePartialDate(value);
-            return new DateRange(value, null);
-        } catch (DateTimeException ignored) {
-            return DateRange.EMPTY;
-        }
-    }
-
-    private static void validatePartialDate(String raw) {
-        var year = YEAR.matcher(raw);
-        if (year.matches()) {
-            Year.of(Integer.parseInt(year.group(1)));
-            return;
-        }
-        var month = MONTH.matcher(raw);
-        if (month.matches()) {
-            YearMonth.of(Integer.parseInt(month.group(1)), Integer.parseInt(month.group(2)));
-            return;
-        }
-        for (DateTimeFormatter formatter : DATE_FORMATTERS) {
-            try {
-                LocalDate.parse(raw, formatter);
-                return;
-            } catch (DateTimeParseException ignored) { }
-        }
-        throw new DateTimeParseException("unsupported partial date", raw, 0);
-    }
-
-    private record DateRange(String start, String end) {
-        private static final DateRange EMPTY = new DateRange(null, null);
-    }
 
     private ArchiveDocument.Photo extractPhoto(XSSFWorkbook workbook, String filename) {
         XSSFSheet main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
@@ -403,39 +393,32 @@ public class ExcelArchiveReader {
         return cell != null && cell.getCellType() == CellType.FORMULA;
     }
 
-    private SourceDate parseDate(XSSFSheet sheet, CellAddress address) {
+    private SourceDate parseDate(
+        XSSFSheet sheet, CellAddress address, String fieldName,
+        WorkbookFieldIssues issues, boolean rejectFuture
+    ) {
         Cell cell = cell(sheet, address.getRow(), address.getColumn());
         if (cell == null || cell.getCellType() == CellType.BLANK) return SourceDate.empty();
         String raw = formatter.formatCellValue(cell).strip();
         if (raw.isEmpty()) return SourceDate.empty();
-        var year = YEAR.matcher(raw);
-        if (year.matches()) {
-            try {
-                return SourceDate.year(raw, Year.of(Integer.parseInt(year.group(1))));
-            } catch (DateTimeException ignored) {
-                // Fall through to the same safe coordinate-only validation message.
-            }
-        }
-        var month = MONTH.matcher(raw);
-        if (month.matches()) {
-            try {
-                return SourceDate.month(raw, YearMonth.of(
-                    Integer.parseInt(month.group(1)), Integer.parseInt(month.group(2))));
-            } catch (DateTimeException ignored) {
-                // Fall through to the same safe coordinate-only validation message.
-            }
-        }
+        SourceDate parsed;
         if ((cell.getCellType() == CellType.NUMERIC
             || cell.getCellType() == CellType.FORMULA && cell.getCachedFormulaResultType() == CellType.NUMERIC)
             && DateUtil.isCellDateFormatted(cell)) {
-            return SourceDate.exact(raw, cell.getLocalDateTimeCellValue().toLocalDate());
-        }
-        for (DateTimeFormatter dateFormatter : DATE_FORMATTERS) {
+            LocalDate date = cell.getLocalDateTimeCellValue().toLocalDate();
+            parsed = SourceDate.exact(date.toString(), date);
+        } else {
             try {
-                return SourceDate.exact(raw, LocalDate.parse(raw, dateFormatter));
-            } catch (DateTimeParseException ignored) { }
+                parsed = SourceValueNormalizerV3.normalizeDate(raw);
+            } catch (SourceValueNormalizationException exception) {
+                issues.add(issue("DATE_NOT_EXACT", fieldName, sheet, address, DATE_GUIDANCE));
+                return SourceDate.empty();
+            }
         }
-        throw new BusinessException(ErrorCode.TEMPLATE_INVALID, address.formatAsString() + " 日期格式不正确");
+        if (rejectFuture && parsed.isAfter(LocalDate.now(clock))) {
+            issues.add(issue("DATE_IN_FUTURE", fieldName, sheet, address, "出生日期不能晚于当前日期"));
+        }
+        return parsed;
     }
 
     private static String parseDeclarationSigner(String raw) {
@@ -443,20 +426,31 @@ public class ExcelArchiveReader {
         return matcher.find() ? matcher.group(1) : "";
     }
 
-    private static SourceDate parseDeclarationDate(String raw) {
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
-            "(\\d{4})\\s*年(?:\\s*(\\d{1,2})\\s*月(?:\\s*(\\d{1,2})\\s*日)?)?")
-            .matcher(raw == null ? "" : raw);
-        if (!matcher.find()) return SourceDate.empty();
-        int year = Integer.parseInt(matcher.group(1));
-        if (matcher.group(2) == null) {
-            return SourceDate.year(matcher.group(), Year.of(year));
+    private SourceDate parseDeclarationDate(
+        XSSFSheet sheet, String raw, CellAddress address, WorkbookFieldIssues issues
+    ) {
+        java.util.regex.Matcher matcher = DECLARATION_TIME.matcher(raw == null ? "" : raw);
+        if (!matcher.find() || matcher.group(1).isBlank()
+            || EMPTY_DECLARATION_DATE.matcher(matcher.group(1)).matches()) {
+            return SourceDate.empty();
         }
-        int month = Integer.parseInt(matcher.group(2));
-        if (matcher.group(3) == null) {
-            return SourceDate.month(matcher.group(), YearMonth.of(year, month));
+        try {
+            // 必须验证“时间：”后的完整内容；截取合法前缀会掩盖尾部错字并改变来源语义。
+            return SourceValueNormalizerV3.normalizeDate(matcher.group(1));
+        } catch (SourceValueNormalizationException exception) {
+            issues.add(issue("DATE_NOT_EXACT", "声明日期", sheet, address, DATE_GUIDANCE));
+            return SourceDate.empty();
         }
-        return SourceDate.exact(matcher.group(),
-            LocalDate.of(year, month, Integer.parseInt(matcher.group(3))));
+    }
+
+    private static WorkbookFieldIssue issue(
+        String code, String fieldName, XSSFSheet sheet, CellAddress address, String guidance
+    ) {
+        return new WorkbookFieldIssue(
+            code, fieldName, sheet.getSheetName(), address.formatAsString(), guidance);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 }

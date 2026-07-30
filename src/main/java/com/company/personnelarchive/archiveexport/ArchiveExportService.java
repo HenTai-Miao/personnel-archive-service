@@ -116,7 +116,7 @@ public class ArchiveExportService {
         education.stream().filter(row -> "FULL_TIME".equals(row.educationType())).findFirst().ifPresent(row -> writeSummary(sheet, row, 8));
         education.stream().filter(row -> "IN_SERVICE".equals(row.educationType())).findFirst().ifPresent(row -> writeSummary(sheet, row, 10));
         set(sheet, "B12", p.mailingAddress()); set(sheet, "F12", p.postalCode()); set(sheet, "H12", p.phoneNumber());
-        // 自由文本按持久化的原文和序号回填，防止结构化解析改变用户输入。
+        // 组合行按已持久化的标准日期片段、非日期文字和序号回填，避免导出端再次解释业务值。
         education.stream().filter(row -> "MAIN".equals(row.educationType())).forEach(row -> writeRawRow(sheet, 12 + row.sortOrder(), row.rawText()));
         work.forEach(row -> writeRawRow(sheet, 17 + row.sortOrder(), row.rawText()));
         rewards.forEach(row -> writeRawRow(sheet, 33 + row.sortOrder(), row.rawText()));

@@ -1,5 +1,7 @@
 # Source-Value Fidelity Implementation Plan
 
+> Follow-up: the 2026-07-30 Chinese source-value projections plan preserves every raw-string guarantee below while adding nullable numeric components. Earlier statements that parsed values are never persisted are superseded only for those explicit projections; API and export behavior remains unchanged.
+
 **Goal:** Preserve every supplied business-date and family-age display value through import, MySQL, detail API, desktop display, and XLSX reconstruction without normalization or derivation.
 
 **Architecture:** `SourceDate` keeps the authoritative source text plus precision-specific validation semantics. Flyway V7 converts every business-date column to `VARCHAR(64)` and removes the V6 transitional companion columns. Persistence, query, client, and export boundaries carry strings directly. Literal family ages remain exact; only the template's exact `DATEDIF(...,TODAY(),"y")` formula is evaluated at import and frozen as text, after which no layer recalculates it.
@@ -9,7 +11,7 @@
 - A year remains a year, a year-month remains a year-month, and a year-month-day remains a year-month-day.
 - Never add a missing month/day, normalize separators, change a literal age, execute an unrecognized formula, recalculate a stored age, or append a display unit. The sole calculation is the template's exact standard age formula at import.
 - Empty values remain empty.
-- Parsed date objects may validate input but are never persisted or returned.
+- Parsed date objects validate input and are never returned; the follow-up plan may persist only their explicitly present numeric components, never a formatted replacement date.
 - Existing transaction, authorization, duplicate, audit, photo, and source-file-retention rules remain unchanged.
 
 ## Task 1: Lock source parsing behavior

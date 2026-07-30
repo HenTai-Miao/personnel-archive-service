@@ -24,15 +24,21 @@ public interface PersonMapper {
     @Insert("""
         INSERT INTO pa_person
         (tenant_id,employee_no,person_name,normalized_name,id_card_ciphertext,id_card_hmac,id_card_last_four,
-         gender,birth_date,nation,native_place,birth_place,political_status,political_join_date,
+         gender,birth_date,birth_date_year,birth_date_month,birth_date_day,
+         nation,native_place,birth_place,political_status,
+         political_join_date,political_join_date_year,political_join_date_month,political_join_date_day,
          marital_status,health_status,mailing_address,postal_code,phone_number,
-         declaration_signer,declaration_date,template_version,
+         declaration_signer,declaration_date,declaration_date_year,declaration_date_month,declaration_date_day,
+         template_version,
          snapshot_version,previous_person_id,created_by,updated_by)
         VALUES
         (#{tenantId},#{employeeNo},#{personName},#{normalizedName},#{idCardCiphertext},#{idCardHmac},#{idCardLastFour},
-         #{gender},#{birthDate},#{nation},#{nativePlace},#{birthPlace},#{politicalStatus},
-         #{politicalJoinDate},#{maritalStatus},#{healthStatus},#{mailingAddress},#{postalCode},
-         #{phoneNumber},#{declarationSigner},#{declarationDate},#{templateVersion},
+         #{gender},#{birthDate.text},#{birthDate.year},#{birthDate.month},#{birthDate.day},
+         #{nation},#{nativePlace},#{birthPlace},#{politicalStatus},
+         #{politicalJoinDate.text},#{politicalJoinDate.year},#{politicalJoinDate.month},#{politicalJoinDate.day},
+         #{maritalStatus},#{healthStatus},#{mailingAddress},#{postalCode},#{phoneNumber},
+         #{declarationSigner},#{declarationDate.text},#{declarationDate.year},#{declarationDate.month},#{declarationDate.day},
+         #{templateVersion},
          #{snapshotVersion},#{previousPersonId},#{operatorId},#{operatorId})
         """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
@@ -55,37 +61,84 @@ public interface PersonMapper {
     int linkReplacement(@Param("oldPersonId") long oldPersonId, @Param("newPersonId") long newPersonId,
                         @Param("operatorId") long operatorId);
 
-    @Insert("INSERT INTO pa_employment (tenant_id,person_id,organization_name,department_name,work_start_date,dispatched_to_bidding_company_date,position_name,professional_title_or_skill,title_or_skill_acquired_date) VALUES (#{tenantId},#{personId},#{organization},#{department},#{workStartDate},#{dispatchDate},#{position},#{titleSkill},#{titleDate})")
+    @Insert("""
+        INSERT INTO pa_employment
+          (tenant_id,person_id,organization_name,department_name,
+           work_start_date,work_start_date_year,work_start_date_month,work_start_date_day,
+           dispatched_to_bidding_company_date,dispatched_to_bidding_company_date_year,
+           dispatched_to_bidding_company_date_month,dispatched_to_bidding_company_date_day,
+           position_name,professional_title_or_skill,
+           title_or_skill_acquired_date,title_or_skill_acquired_date_year,
+           title_or_skill_acquired_date_month,title_or_skill_acquired_date_day)
+        VALUES
+          (#{tenantId},#{personId},#{organization},#{department},
+           #{workStartDate.text},#{workStartDate.year},#{workStartDate.month},#{workStartDate.day},
+           #{dispatchDate.text},#{dispatchDate.year},#{dispatchDate.month},#{dispatchDate.day},
+           #{position},#{titleSkill},
+           #{titleDate.text},#{titleDate.year},#{titleDate.month},#{titleDate.day})
+        """)
     int insertEmployment(@Param("tenantId") long tenantId, @Param("personId") long personId,
                          @Param("organization") String organization, @Param("department") String department,
-                         @Param("workStartDate") String workStartDate,
-                         @Param("dispatchDate") String dispatchDate,
+                         @Param("workStartDate") DateProjection workStartDate,
+                         @Param("dispatchDate") DateProjection dispatchDate,
                          @Param("position") String position, @Param("titleSkill") String titleSkill,
-                         @Param("titleDate") String titleDate);
+                         @Param("titleDate") DateProjection titleDate);
 
-    @Insert("INSERT INTO pa_education (tenant_id,person_id,education_type,institution_name,department_and_major,education_level,degree_name,start_date,end_date,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{type},#{institution},#{major},#{level},#{degree},#{startDate},#{endDate},#{rawText},#{sortOrder})")
+    @Insert("""
+        INSERT INTO pa_education
+          (tenant_id,person_id,education_type,institution_name,department_and_major,education_level,degree_name,
+           start_date,start_date_year,start_date_month,start_date_day,
+           end_date,end_date_year,end_date_month,end_date_day,raw_text,sort_order)
+        VALUES
+          (#{tenantId},#{personId},#{type},#{institution},#{major},#{level},#{degree},
+           #{startDate.text},#{startDate.year},#{startDate.month},#{startDate.day},
+           #{endDate.text},#{endDate.year},#{endDate.month},#{endDate.day},#{rawText},#{sortOrder})
+        """)
     int insertEducation(@Param("tenantId") long tenantId, @Param("personId") long personId, @Param("type") String type,
                         @Param("institution") String institution, @Param("major") String major,
                         @Param("level") String level, @Param("degree") String degree,
-                        @Param("startDate") String startDate, @Param("endDate") String endDate,
+                        @Param("startDate") DateProjection startDate, @Param("endDate") DateProjection endDate,
                         @Param("rawText") String rawText, @Param("sortOrder") int sortOrder);
 
-    @Insert("INSERT INTO pa_work_experience (tenant_id,person_id,start_date,end_date,organization_and_position,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{startDate},#{endDate},#{organizationAndPosition},#{rawText},#{sortOrder})")
+    @Insert("""
+        INSERT INTO pa_work_experience
+          (tenant_id,person_id,start_date,start_date_year,start_date_month,start_date_day,
+           end_date,end_date_year,end_date_month,end_date_day,organization_and_position,raw_text,sort_order)
+        VALUES
+          (#{tenantId},#{personId},#{startDate.text},#{startDate.year},#{startDate.month},#{startDate.day},
+           #{endDate.text},#{endDate.year},#{endDate.month},#{endDate.day},
+           #{organizationAndPosition},#{rawText},#{sortOrder})
+        """)
     int insertWork(@Param("tenantId") long tenantId, @Param("personId") long personId,
-                   @Param("startDate") String startDate, @Param("endDate") String endDate,
+                   @Param("startDate") DateProjection startDate, @Param("endDate") DateProjection endDate,
                    @Param("organizationAndPosition") String organizationAndPosition,
                    @Param("rawText") String rawText, @Param("sortOrder") int sortOrder);
 
-    @Insert("INSERT INTO pa_reward_punishment (tenant_id,person_id,occurred_date,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{occurredDate},#{rawText},#{sortOrder})")
+    @Insert("""
+        INSERT INTO pa_reward_punishment
+          (tenant_id,person_id,occurred_date,occurred_date_year,occurred_date_month,occurred_date_day,raw_text,sort_order)
+        VALUES
+          (#{tenantId},#{personId},#{occurredDate.text},#{occurredDate.year},#{occurredDate.month},#{occurredDate.day},
+           #{rawText},#{sortOrder})
+        """)
     int insertReward(@Param("tenantId") long tenantId, @Param("personId") long personId,
-                     @Param("occurredDate") String occurredDate,
+                     @Param("occurredDate") DateProjection occurredDate,
                      @Param("rawText") String rawText, @Param("sortOrder") int sortOrder);
 
-    @Insert("INSERT INTO pa_family_member (tenant_id,person_id,relationship_name,member_name,normalized_member_name,birth_date,age_text,political_status,organization_and_position,raw_text,sort_order) VALUES (#{tenantId},#{personId},#{relationship},#{name},#{normalizedName},#{birthDate},#{ageText},#{politicalStatus},#{workplace},#{rawText},#{sortOrder})")
+    @Insert("""
+        INSERT INTO pa_family_member
+          (tenant_id,person_id,relationship_name,member_name,normalized_member_name,
+           birth_date,birth_date_year,birth_date_month,birth_date_day,age_text,age_value,
+           political_status,organization_and_position,raw_text,sort_order)
+        VALUES
+          (#{tenantId},#{personId},#{relationship},#{name},#{normalizedName},
+           #{birthDate.text},#{birthDate.year},#{birthDate.month},#{birthDate.day},#{age.text},#{age.value},
+           #{politicalStatus},#{workplace},#{rawText},#{sortOrder})
+        """)
     int insertFamily(@Param("tenantId") long tenantId, @Param("personId") long personId,
                      @Param("relationship") String relationship, @Param("name") String name,
-                     @Param("normalizedName") String normalizedName, @Param("birthDate") String birthDate,
-                     @Param("ageText") String ageText,
+                     @Param("normalizedName") String normalizedName,
+                     @Param("birthDate") DateProjection birthDate, @Param("age") AgeProjection age,
                      @Param("politicalStatus") String politicalStatus, @Param("workplace") String workplace,
                      @Param("rawText") String rawText, @Param("sortOrder") int sortOrder);
 
@@ -103,6 +156,22 @@ public interface PersonMapper {
     record ActivePerson(long id, String employeeNo, String personName, String normalizedName,
                         byte[] idCardHmac, String idCardLastFour, long snapshotVersion, java.time.Instant updatedAt) {}
 
+    record DateProjection(String text, Integer year, Integer month, Integer day) {
+        private static final DateProjection EMPTY = new DateProjection(null, null, null, null);
+
+        static DateProjection empty() {
+            return EMPTY;
+        }
+    }
+
+    record AgeProjection(String text, Integer value) {
+        private static final AgeProjection EMPTY = new AgeProjection(null, null);
+
+        static AgeProjection empty() {
+            return EMPTY;
+        }
+    }
+
     class PersonInsert {
         public Long id;
         public long tenantId;
@@ -113,19 +182,19 @@ public interface PersonMapper {
         public byte[] idCardHmac;
         public String idCardLastFour;
         public String gender;
-        public String birthDate;
+        public DateProjection birthDate;
         public String nation;
         public String nativePlace;
         public String birthPlace;
         public String politicalStatus;
-        public String politicalJoinDate;
+        public DateProjection politicalJoinDate;
         public String maritalStatus;
         public String healthStatus;
         public String mailingAddress;
         public String postalCode;
         public String phoneNumber;
         public String declarationSigner;
-        public String declarationDate;
+        public DateProjection declarationDate;
         public String templateVersion;
         public long snapshotVersion;
         public Long previousPersonId;

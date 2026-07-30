@@ -3,6 +3,7 @@ package com.company.personnelarchive.archiveimport;
 
 import com.company.personnelarchive.archiveexport.ArchiveExportService;
 import com.company.personnelarchive.common.BusinessException;
+import com.company.personnelarchive.common.ErrorCode;
 import com.company.personnelarchive.configuration.ArchiveProperties;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFCell;
@@ -18,7 +19,9 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.util.Locale;
 import java.util.function.Consumer;
+import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.ClientAnchor;
 import org.apache.poi.ss.util.CellAddress;
@@ -149,9 +152,9 @@ class ExcelTemplateV1Test {
             new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
 
         assertThat(document.workExperiences()).extracting(ArchiveDocument.OrderedText::rawText)
-            .contains("2020.01-2021.01\t测试工作经历");
+            .contains("2020-01—2021-01\t测试工作经历");
         assertThat(document.rewardsPunishments()).extracting(ArchiveDocument.OrderedText::rawText)
-            .containsExactly("2022.01\t测试奖励");
+            .containsExactly("2022-01\t测试奖励");
         assertThat(document.familyMembers()).hasSize(1);
         assertThat(document.familyMembers().getFirst().birthDate().exactDate())
             .isEqualTo(LocalDate.of(2000, 7, 23));
@@ -166,7 +169,7 @@ class ExcelTemplateV1Test {
         ArchiveDocument document = new ExcelArchiveReader(properties()).read(
             new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
 
-        assertThat(document.birthDate().text()).isEqualTo("1988.07");
+        assertThat(document.birthDate().text()).isEqualTo("1988-07");
         assertThat(document.birthDate().exactDate()).isNull();
         assertThat(document.birthDate().yearMonth()).isEqualTo(YearMonth.of(1988, 7));
     }
@@ -186,7 +189,156 @@ class ExcelTemplateV1Test {
     }
 
     @Test
-    void preservesSuppliedFamilyAge() throws Exception {
+    void canonicalizesChineseDatesRangesAndExactAge() throws Exception {
+        byte[] bytes = workbookBytes(workbook -> {
+            WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, new DataFormatter(Locale.CHINA));
+            XSSFSheet main = layout.main();
+            cell(main, layout.scalar("birthDate").formatAsString()).setCellValue("二〇二四年五月");
+            cell(main, layout.scalar("politicalJoinDate").formatAsString()).setCellValue("二〇二四年");
+            cell(main, "B" + (layout.workRow() + 2)).setCellValue("二〇二〇年五月至二〇二一年六月");
+            cell(main, "D" + (layout.workRow() + 2)).setCellValue("测试工作经历");
+
+            int familyRow = layout.familyHeaderRow() + 2;
+            cell(main, "B" + familyRow).setCellValue("妻子");
+            cell(main, "C" + familyRow).setCellValue("测试成员");
+            cell(main, "D" + familyRow).setCellValue("三十五岁");
+            int helperRow = layout.helperHeaderRow() + 2;
+            cell(layout.helper(), "B" + helperRow).setCellValue("妻子");
+            cell(layout.helper(), "C" + helperRow).setCellValue("测试成员");
+            cell(layout.helper(), "D" + helperRow).setCellValue("二〇二四年五月三日");
+            cell(main, "B" + (layout.declarationValueRow() + 1))
+                .setCellValue("承诺人：测试甲  时间：二〇二四年五月三日");
+        });
+
+        ArchiveDocument document = new ExcelArchiveReader(properties()).read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.birthDate().text()).isEqualTo("2024-05");
+        assertThat(document.birthDate().yearMonth()).isEqualTo(YearMonth.of(2024, 5));
+        assertThat(document.politicalJoinDate().text()).isEqualTo("2024");
+        assertThat(document.politicalJoinDate().year()).isEqualTo(Year.of(2024));
+        assertThat(document.workExperiences()).singleElement().satisfies(item -> {
+            assertThat(item.rawText()).isEqualTo("2020-05—2021-06\t测试工作经历");
+            assertThat(item.startDate()).isEqualTo("2020-05");
+            assertThat(item.endDate()).isEqualTo("2021-06");
+        });
+        assertThat(document.familyMembers()).singleElement().satisfies(member -> {
+            assertThat(member.birthDate().text()).isEqualTo("2024-05-03");
+            assertThat(member.birthDate().exactDate()).isEqualTo(LocalDate.of(2024, 5, 3));
+            assertThat(member.ageText()).isEqualTo("35");
+        });
+        assertThat(document.declarationDate().text()).isEqualTo("2024-05-03");
+        assertThat(document.declarationDate().exactDate()).isEqualTo(LocalDate.of(2024, 5, 3));
+    }
+
+    @Test
+    void readsMixedDelimitedDatesAcrossScalarHelperDeclarationAndRange() throws Exception {
+        byte[] bytes = workbookBytes(workbook -> {
+            WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, new DataFormatter(Locale.CHINA));
+            XSSFSheet main = layout.main();
+            cell(main, layout.scalar("birthDate").formatAsString()).setCellValue("二〇二四.五.三");
+            cell(main, "B" + (layout.workRow() + 2)).setCellValue("二〇二四． 五 － 二〇二五． 六");
+            cell(main, "D" + (layout.workRow() + 2)).setCellValue("测试工作经历");
+
+            int familyRow = layout.familyHeaderRow() + 2;
+            cell(main, "B" + familyRow).setCellValue("妻子");
+            cell(main, "C" + familyRow).setCellValue("测试成员");
+            cell(main, "D" + familyRow).setCellValue("三十五岁");
+            int helperRow = layout.helperHeaderRow() + 2;
+            cell(layout.helper(), "B" + helperRow).setCellValue("妻子");
+            cell(layout.helper(), "C" + helperRow).setCellValue("测试成员");
+            cell(layout.helper(), "D" + helperRow).setCellValue("二〇〇〇/七/二十三");
+            cell(main, "B" + (layout.declarationValueRow() + 1))
+                .setCellValue("承诺人：测试甲  时间：二〇二六-七-二十二");
+        });
+
+        ArchiveDocument document = new ExcelArchiveReader(properties()).read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.birthDate().text()).isEqualTo("2024-05-03");
+        assertThat(document.birthDate().exactDate()).isEqualTo(LocalDate.of(2024, 5, 3));
+        assertThat(document.workExperiences()).singleElement().satisfies(item -> {
+            assertThat(item.rawText()).isEqualTo("2024-05—2025-06\t测试工作经历");
+            assertThat(item.startDate()).isEqualTo("2024-05");
+            assertThat(item.endDate()).isEqualTo("2025-06");
+        });
+        assertThat(document.familyMembers()).singleElement().satisfies(member -> {
+            assertThat(member.birthDate().text()).isEqualTo("2000-07-23");
+            assertThat(member.birthDate().exactDate()).isEqualTo(LocalDate.of(2000, 7, 23));
+            assertThat(member.ageText()).isEqualTo("35");
+        });
+        assertThat(document.declarationDate().text()).isEqualTo("2026-07-22");
+        assertThat(document.declarationDate().exactDate()).isEqualTo(LocalDate.of(2026, 7, 22));
+    }
+
+    @Test
+    void canonicalizesV1CompatibleRangeEndpoints() throws Exception {
+        byte[] bytes = workbookBytes(workbook -> {
+            WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, new DataFormatter(Locale.CHINA));
+            XSSFSheet main = layout.main();
+            cell(main, "B" + (layout.workRow() + 2)).setCellValue("2024． 05 － 2025． 06");
+            cell(main, "D" + (layout.workRow() + 2)).setCellValue("测试工作经历");
+        });
+
+        ArchiveDocument document = new ExcelArchiveReader(properties()).read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
+
+        assertThat(document.workExperiences()).singleElement().satisfies(item -> {
+            assertThat(item.rawText()).isEqualTo("2024-05—2025-06\t测试工作经历");
+            assertThat(item.startDate()).isEqualTo("2024-05");
+            assertThat(item.endDate()).isEqualTo("2025-06");
+        });
+    }
+
+    @Test
+    void rejectsDeclarationDatesWithUnsupportedTrailingText() throws Exception {
+        for (String invalidDate : java.util.List.of("二〇二四.五.三号", "二〇二四年五月三号")) {
+            String[] declarationAddress = new String[1];
+            byte[] bytes = workbookBytes(workbook -> {
+                WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, new DataFormatter(Locale.CHINA));
+                declarationAddress[0] = new CellAddress(layout.declarationValueRow(), 1).formatAsString();
+                cell(layout.main(), declarationAddress[0])
+                    .setCellValue("承诺人：测试甲  时间：" + invalidDate);
+            });
+
+            assertThatThrownBy(() -> new ExcelArchiveReader(properties()).read(
+                new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx"))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.code()).isEqualTo(ErrorCode.IMPORT_FIELD_VALIDATION_FAILED);
+                    assertThat(exception).hasMessageContaining(
+                        "声明日期导入失败（基本情况!" + declarationAddress[0] + "）");
+                });
+        }
+    }
+
+    @Test
+    void reportsAllInvalidAgeAndDateFieldsWithBusinessNamesAndCells() throws Exception {
+        String[] birthAddress = new String[1];
+        String[] ageAddress = new String[1];
+        byte[] bytes = workbookBytes(workbook -> {
+            WorkbookLayoutV1 layout = WorkbookLayoutV1.resolve(workbook, new DataFormatter(Locale.CHINA));
+            birthAddress[0] = layout.scalar("birthDate").formatAsString();
+            cell(layout.main(), birthAddress[0]).setCellValue("二〇二四年春");
+
+            int familyRow = layout.familyHeaderRow() + 2;
+            cell(layout.main(), "B" + familyRow).setCellValue("妻子");
+            cell(layout.main(), "C" + familyRow).setCellValue("测试成员");
+            ageAddress[0] = "D" + familyRow;
+            cell(layout.main(), ageAddress[0]).setCellValue("三十多岁");
+        });
+
+        assertThatThrownBy(() -> new ExcelArchiveReader(properties()).read(
+            new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx"))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                assertThat(exception.code()).isEqualTo(ErrorCode.IMPORT_FIELD_VALIDATION_FAILED);
+                assertThat(exception.getMessage())
+                    .contains("出生年月导入失败（基本情况!" + birthAddress[0] + "）")
+                    .contains("家庭成员第 1 行年龄导入失败（基本情况!" + ageAddress[0] + "）");
+            });
+    }
+
+    @Test
+    void canonicalizesSuppliedFamilyAge() throws Exception {
         byte[] bytes = workbookBytes(workbook -> {
             XSSFSheet main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
             cell(main, "B39").setCellValue("妻子");
@@ -253,7 +405,7 @@ class ExcelTemplateV1Test {
         ArchiveDocument document = new ExcelArchiveReader(properties()).read(
             new ByteArrayInputStream(bytes), bytes.length, "fixture.xlsx");
 
-        assertThat(document.declarationDate().text()).isEqualTo("2026年7月");
+        assertThat(document.declarationDate().text()).isEqualTo("2026-07");
         assertThat(document.declarationDate().exactDate()).isNull();
         assertThat(document.declarationDate().yearMonth()).isEqualTo(YearMonth.of(2026, 7));
     }

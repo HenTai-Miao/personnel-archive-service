@@ -8,10 +8,10 @@ Use backend port `18080` consistently in every environment, while keeping produc
 
 ## Confirmed endpoint
 
-- Production service host: `10.141.29.96`
+- Production service host: `10.23.157.237`
 - Production service port: `18080`
-- Production API base URL: `http://10.141.29.96:18080/api/v1`
-- Production API origin: `http://10.141.29.96:18080`
+- Production API base URL: `http://10.23.157.237:18080/api/v1`
+- Production API origin: `http://10.23.157.237:18080`
 - Local API base URL: `http://127.0.0.1:18080/api/v1`
 - Local API origin: `http://127.0.0.1:18080`
 
@@ -30,8 +30,8 @@ The service continues to bind according to Spring Boot's normal server-address b
 The tracked `.env.prod` contains:
 
 ```dotenv
-VITE_API_BASE_URL=http://10.141.29.96:18080/api/v1
-VITE_API_ORIGIN=http://10.141.29.96:18080
+VITE_API_BASE_URL=http://10.23.157.237:18080/api/v1
+VITE_API_ORIGIN=http://10.23.157.237:18080
 ```
 
 The local `.env.local`, tracked `.env.example`, renderer fallback, Vite fallback, and Electron E2E request interceptors all use `http://127.0.0.1:18080`. The production build remains explicitly driven by `build:prod`, ensuring a distributable client uses the server host while both modes share the same backend port.
@@ -44,7 +44,7 @@ The existing Vite configuration continues to validate that `VITE_API_ORIGIN` mat
 2. The local launcher and development client use `127.0.0.1:18080`.
 3. The Windows client is built with Vite mode `prod`.
 4. Vite reads `.env.prod`, embeds the versioned API base URL, and injects the matching production origin into the renderer Content Security Policy.
-5. The packaged client sends authenticated API requests to `10.141.29.96:18080`.
+5. The packaged client sends authenticated API requests to `10.23.157.237:18080`.
 
 ## Failure handling
 
@@ -55,13 +55,13 @@ The existing Vite configuration continues to validate that `VITE_API_ORIGIN` mat
 ## Verification
 
 - Add frontend regression coverage for the local `18080` endpoint and explicit production build contract.
-- Build the renderer in `prod` mode and verify the emitted CSP and request base point to `10.141.29.96:18080` rather than `127.0.0.1`.
+- Build the renderer in `prod` mode and verify the emitted CSP and request base point to `10.23.157.237:18080` rather than `127.0.0.1`.
 - Update the backend configuration test so common, `dev`, and `prod` configurations all resolve port `18080`, while `PA_SERVER_PORT` still overrides the shared value.
 - Run the frontend lint, type check, unit tests, and production build.
 - Run the backend configuration and all non-database tests plus JAR packaging. Do not pull Testcontainers images or point automated tests at the user's existing `local-mysql` database.
 
 ## Out of scope
 
-- Logging into or deploying files to `10.141.29.96`.
+- Logging into or deploying files to `10.23.157.237`.
 - Installing Java, MySQL, a reverse proxy, TLS certificates, firewall rules, or a process supervisor.
 - Storing the supplied server password.

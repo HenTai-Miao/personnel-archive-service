@@ -118,29 +118,129 @@ class PersonnelArchiveFlowIntegrationTest {
         mvc.perform(get("/api/v1/imports/history"))
             .andExpect(status().isUnauthorized());
         String accessToken = login();
+
+        int peopleBeforeValidationBatch = jdbc.queryForObject("SELECT COUNT(*) FROM pa_person", Integer.class);
+        JsonNode validationBatch = uploadValidationBatch(accessToken);
+        JsonNode invalidItem = itemByFileName(validationBatch, "invalid-fields.xlsx");
+        JsonNode validCompanion = itemByFileName(validationBatch, "valid-companion.xlsx");
+        assertThat(invalidItem.at("/status").asText()).isEqualTo("FAILED");
+        assertThat(invalidItem.at("/code").asText()).isEqualTo("IMPORT_FIELD_VALIDATION_FAILED");
+        assertThat(invalidItem.at("/message").asText())
+            .contains("出生年月导入失败（基本情况!F3）")
+            .contains("家庭成员第 1 行年龄导入失败（基本情况!D39）");
+        assertThat(validCompanion.at("/status").asText()).isEqualTo("IMPORTED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pa_person", Integer.class))
+            .isEqualTo(peopleBeforeValidationBatch + 1);
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM pa_person WHERE employee_no='FLOW-INVALID'", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM pa_person WHERE employee_no='FLOW-VALID-COMPANION'", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject("""
+            SELECT COUNT(*) FROM pa_family_member f
+            JOIN pa_person p ON p.id=f.person_id
+            WHERE p.employee_no='FLOW-INVALID'
+            """, Integer.class)).isZero();
+        assertThat(jdbc.queryForObject(
+            "SELECT result_message FROM pa_import_item WHERE original_filename='invalid-fields.xlsx'",
+            String.class))
+            .contains("出生年月导入失败（基本情况!F3）", "家庭成员第 1 行年龄导入失败（基本情况!D39）");
+
         JsonNode imported = upload(accessToken, workbook("00000001", "初次导入"));
         assertThat(imported.at("/items/0/status").asText()).as(imported.toPrettyString()).isEqualTo("IMPORTED");
         long firstPersonId = activePersonId();
         byte[] storedPhotoBytes = jdbc.queryForObject("SELECT photo_data FROM pa_person_photo WHERE person_id=?", byte[].class, firstPersonId);
-        assertThat(jdbc.queryForMap(
-            "SELECT birth_date,age_text FROM pa_family_member WHERE person_id=?", firstPersonId))
+        assertThat(jdbc.queryForMap("""
+            SELECT birth_date,birth_date_year,birth_date_month,birth_date_day,
+                   political_join_date,political_join_date_year,political_join_date_month,political_join_date_day,
+                   declaration_date,declaration_date_year,declaration_date_month,declaration_date_day
+            FROM pa_person WHERE id=?
+            """, firstPersonId))
+            .containsEntry("birth_date", "2000")
+            .containsEntry("birth_date_year", 2000)
+            .containsEntry("birth_date_month", null)
+            .containsEntry("birth_date_day", null)
+            .containsEntry("political_join_date", "2021-07")
+            .containsEntry("political_join_date_year", 2021)
+            .containsEntry("political_join_date_month", 7)
+            .containsEntry("political_join_date_day", null)
+            .containsEntry("declaration_date", "2026-07-22")
+            .containsEntry("declaration_date_year", 2026)
+            .containsEntry("declaration_date_month", 7)
+            .containsEntry("declaration_date_day", 22);
+        assertThat(jdbc.queryForMap("""
+            SELECT birth_date,birth_date_year,birth_date_month,birth_date_day,age_text,age_value
+            FROM pa_family_member WHERE person_id=? AND sort_order=1
+            """, firstPersonId))
             .containsEntry("birth_date", "2000-07-23")
-            .containsEntry("age_text", "25");
-        assertThat(jdbc.queryForMap("SELECT organization_name,department_name FROM pa_employment WHERE person_id=?", firstPersonId))
+            .containsEntry("birth_date_year", 2000)
+            .containsEntry("birth_date_month", 7)
+            .containsEntry("birth_date_day", 23)
+            .containsEntry("age_text", "35")
+            .containsEntry("age_value", 35);
+        assertThat(jdbc.queryForMap("""
+            SELECT age_text,age_value FROM pa_family_member WHERE person_id=? AND sort_order=2
+            """, firstPersonId))
+            .containsEntry("age_text", "30")
+            .containsEntry("age_value", 30);
+        assertThat(jdbc.queryForMap("""
+            SELECT organization_name,department_name,work_start_date,
+                   work_start_date_year,work_start_date_month,work_start_date_day,
+                   dispatched_to_bidding_company_date_year,dispatched_to_bidding_company_date_month,
+                   dispatched_to_bidding_company_date_day,title_or_skill_acquired_date_year,
+                   title_or_skill_acquired_date_month,title_or_skill_acquired_date_day
+            FROM pa_employment WHERE person_id=?
+            """, firstPersonId))
             .containsEntry("organization_name", "测试单位")
-            .containsEntry("department_name", "测试部门");
+            .containsEntry("department_name", "测试部门")
+            .containsEntry("work_start_date", "2020-01-01")
+            .containsEntry("work_start_date_year", 2020)
+            .containsEntry("work_start_date_month", 1)
+            .containsEntry("work_start_date_day", 1)
+            .containsEntry("dispatched_to_bidding_company_date_year", 2021)
+            .containsEntry("dispatched_to_bidding_company_date_month", null)
+            .containsEntry("dispatched_to_bidding_company_date_day", null)
+            .containsEntry("title_or_skill_acquired_date_year", 2022)
+            .containsEntry("title_or_skill_acquired_date_month", 1)
+            .containsEntry("title_or_skill_acquired_date_day", null);
         assertThat(jdbc.queryForMap(
-            "SELECT start_date,end_date,raw_text FROM pa_education WHERE person_id=? AND education_type='MAIN'",
-            firstPersonId)).containsEntry("start_date", "2020.09").containsEntry("end_date", "2024.06")
-            .containsEntry("raw_text", "2020.09-2024.06\t示例大学");
+            "SELECT start_date,end_date,start_date_year,start_date_month,start_date_day,end_date_year,end_date_month,end_date_day,raw_text FROM pa_education WHERE person_id=? AND education_type='MAIN'",
+            firstPersonId))
+            .containsEntry("start_date", "2020-09")
+            .containsEntry("start_date_year", 2020)
+            .containsEntry("start_date_month", 9)
+            .containsEntry("start_date_day", null)
+            .containsEntry("end_date", "2024-06")
+            .containsEntry("end_date_year", 2024)
+            .containsEntry("end_date_month", 6)
+            .containsEntry("end_date_day", null)
+            .containsEntry("raw_text", "2020-09—2024-06\t示例大学");
         assertThat(jdbc.queryForObject("SELECT start_date FROM pa_work_experience WHERE person_id=?", String.class, firstPersonId))
-            .isEqualTo("2024.07");
+            .isEqualTo("2024-07");
         assertThat(jdbc.queryForObject("SELECT end_date FROM pa_work_experience WHERE person_id=?", String.class, firstPersonId))
             .isEqualTo("至今");
+        assertThat(jdbc.queryForMap("""
+            SELECT start_date_year,start_date_month,start_date_day,end_date_year,end_date_month,end_date_day
+            FROM pa_work_experience WHERE person_id=?
+            """, firstPersonId))
+            .containsEntry("start_date_year", 2024)
+            .containsEntry("start_date_month", 7)
+            .containsEntry("start_date_day", null)
+            .containsEntry("end_date_year", null)
+            .containsEntry("end_date_month", null)
+            .containsEntry("end_date_day", null);
         assertThat(jdbc.queryForObject("SELECT organization_and_position FROM pa_work_experience WHERE person_id=?", String.class, firstPersonId))
             .isEqualTo("初次导入");
+        assertThat(jdbc.queryForObject("SELECT raw_text FROM pa_work_experience WHERE person_id=?", String.class, firstPersonId))
+            .isEqualTo("2024-07—至今\t初次导入");
         assertThat(jdbc.queryForObject("SELECT occurred_date FROM pa_reward_punishment WHERE person_id=?", String.class, firstPersonId))
-            .isEqualTo("2025.01");
+            .isEqualTo("2025-01-02");
+        assertThat(jdbc.queryForMap("""
+            SELECT occurred_date_year,occurred_date_month,occurred_date_day
+            FROM pa_reward_punishment WHERE person_id=?
+            """, firstPersonId))
+            .containsEntry("occurred_date_year", 2025)
+            .containsEntry("occurred_date_month", 1)
+            .containsEntry("occurred_date_day", 2);
         assertThat(jdbc.queryForObject("SELECT byte_size FROM pa_person_photo WHERE person_id=?", Long.class, firstPersonId))
             .isPositive();
         var storedPhoto = jdbc.queryForMap("SELECT anchor_col1,anchor_row1,anchor_dx1,anchor_dy1,anchor_col2,anchor_row2,anchor_dx2,anchor_dy2,anchor_type FROM pa_person_photo WHERE person_id=?", firstPersonId);
@@ -175,7 +275,7 @@ class PersonnelArchiveFlowIntegrationTest {
         assertThat(duplicate.at("/items/0/duplicate/identityCardLastFour").asText()).isEqualTo("0012");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_operation_log WHERE action_code='IMPORT'", Integer.class))
             .as("a successful duplicate precheck is still an audited import operation")
-            .isEqualTo(2);
+            .isGreaterThanOrEqualTo(4);
         String overwriteItemId = duplicate.at("/items/0/itemId").asText();
         String decisionAccessToken = login(DECISION_USERNAME, DECISION_PASSWORD);
         JsonNode overwritten = decide(decisionAccessToken, overwriteItemId, "OVERWRITE");
@@ -239,15 +339,22 @@ class PersonnelArchiveFlowIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
             .andExpect(status().isOk()).andReturn();
         JsonNode detail = objectMapper.readTree(detailResult.getResponse().getContentAsByteArray());
-        assertThat(detail.at("/personal/politicalJoinDate").asText()).isEqualTo("2021-07-01");
-        assertThat(detail.at("/employment/dispatchedToBiddingCompanyDate").asText()).isEqualTo("2021-01-01");
+        assertThat(detail.at("/personal/birthDate").asText()).isEqualTo("2000");
+        assertThat(detail.at("/personal/politicalJoinDate").asText()).isEqualTo("2021-07");
+        assertThat(detail.at("/employment/workStartDate").asText()).isEqualTo("2020-01-01");
+        assertThat(detail.at("/employment/dispatchedToBiddingCompanyDate").asText()).isEqualTo("2021");
         assertThat(detail.at("/education/fullTime/institutionName").asText()).isEqualTo("全日制大学");
         assertThat(detail.at("/mainEducation/0/rightText").asText()).isEqualTo("示例大学");
+        assertThat(detail.at("/workExperiences/0/leftText").asText()).isEqualTo("2024-07—至今");
         assertThat(detail.at("/workExperiences/0/rightText").asText()).isEqualTo("覆盖版本");
         assertThat(detail.at("/rewardsPunishments/0/rightText").asText()).isEqualTo("测试奖励");
         assertThat(detail.at("/familyMembers/0/politicalStatus").asText()).isEqualTo("测试面貌");
-        assertThat(detail.at("/familyMembers/0/age").asText()).isEqualTo("25");
-        assertThat(detail.at("/declaration/date").asText()).isEqualTo("2026年7月22日");
+        assertThat(detail.at("/familyMembers/0/birthDate").asText()).isEqualTo("2000-07-23");
+        assertThat(detail.at("/familyMembers/0/age").asText()).isEqualTo("35");
+        assertThat(detail.at("/familyMembers/1/age").asText()).isEqualTo("30");
+        assertThat(detail.at("/declaration/date").asText()).isEqualTo("2026-07-22");
+        assertThat(detail.at("/personal").has("birthDateYear")).isFalse();
+        assertThat(detail.at("/familyMembers/0").has("ageValue")).isFalse();
         assertThat(detail.at("/photo/mimeType").asText()).isEqualTo("image/png");
         assertThat(detail.at("/identityCardMasked").asText()).isEqualTo("9900***********012");
         assertThat(detail.at("/personal/phoneNumberMasked").asText()).isEqualTo("0000*002");
@@ -283,9 +390,12 @@ class PersonnelArchiveFlowIntegrationTest {
             assertThat(main.getRow(1).getCell(1).getStringCellValue()).isEqualTo(EMPLOYEE_NO);
             assertThat(main.getRow(11).getCell(7).getStringCellValue()).isEqualTo("00000002");
             assertThat(main.getRow(12).getCell(3).getStringCellValue()).isEqualTo("示例大学");
-            assertThat(formatter.formatCellValue(main.getRow(2).getCell(5))).isEqualTo("2000-01-01");
+            assertThat(main.getRow(17).getCell(1).getStringCellValue()).isEqualTo("2024-07—至今");
+            assertThat(formatter.formatCellValue(main.getRow(2).getCell(5))).isEqualTo("2000");
+            assertThat(formatter.formatCellValue(main.getRow(4).getCell(5))).isEqualTo("2020-01-01");
             assertThat(main.getRow(9).getCell(2).getCellType()).isEqualTo(CellType.BLANK);
-            assertThat(formatter.formatCellValue(main.getRow(38).getCell(3))).isEqualTo("25");
+            assertThat(formatter.formatCellValue(main.getRow(38).getCell(3))).isEqualTo("35");
+            assertThat(formatter.formatCellValue(main.getRow(39).getCell(3))).isEqualTo("30");
             var helperBirthDate = workbook.getSheet(ExcelTemplateV1.AGE_SHEET).getRow(1).getCell(3);
             assertThat(formatter.formatCellValue(helperBirthDate)).isEqualTo("2000-07-23");
             assertThat(workbook.getSheet(ExcelTemplateV1.AGE_SHEET).getRow(1).getCell(4).getCellType()).isEqualTo(CellType.BLANK);
@@ -344,6 +454,26 @@ class PersonnelArchiveFlowIntegrationTest {
         return objectMapper.readTree(result.getResponse().getContentAsByteArray());
     }
 
+    private JsonNode uploadValidationBatch(String token) throws Exception {
+        var invalid = new MockMultipartFile("files", "invalid-fields.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            validationWorkbook("FLOW-INVALID", "错误字段档案", true));
+        var valid = new MockMultipartFile("files", "valid-companion.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            validationWorkbook("FLOW-VALID-COMPANION", "批次有效档案", false));
+        var result = mvc.perform(multipart("/api/v1/imports").file(invalid).file(valid)
+                .header(HttpHeaders.AUTHORIZATION, bearer(token)))
+            .andExpect(status().isOk()).andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsByteArray());
+    }
+
+    private static JsonNode itemByFileName(JsonNode batch, String fileName) {
+        return java.util.stream.StreamSupport.stream(batch.at("/items").spliterator(), false)
+            .filter(item -> fileName.equals(item.at("/fileName").asText()))
+            .findFirst()
+            .orElseThrow();
+    }
+
     private JsonNode decide(String token, String itemId, String decision) throws Exception {
         var result = mvc.perform(post("/api/v1/imports/{itemId}/decision", itemId)
                 .header(HttpHeaders.AUTHORIZATION, bearer(token)).contentType(MediaType.APPLICATION_JSON)
@@ -360,6 +490,23 @@ class PersonnelArchiveFlowIntegrationTest {
         return "Bearer " + token;
     }
 
+    private byte[] validationWorkbook(String employeeNo, String personName, boolean invalid) throws Exception {
+        try (var input = getClass().getResourceAsStream("/excel/personnel-archive-template-v1.xlsx");
+             var workbook = new XSSFWorkbook(input); var output = new ByteArrayOutputStream()) {
+            var main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
+            main.getRow(1).getCell(1).setCellValue(employeeNo);
+            main.getRow(2).getCell(1).setCellValue(personName);
+            if (invalid) {
+                main.getRow(2).getCell(5).setCellValue("二〇二四年春");
+                main.getRow(38).getCell(1).setCellValue("朋友");
+                main.getRow(38).getCell(2).setCellValue("模糊年龄成员");
+                main.getRow(38).getCell(3).setCellValue("三十多岁");
+            }
+            workbook.write(output);
+            return output.toByteArray();
+        }
+    }
+
     private byte[] workbook(String phone, String workDescription) throws Exception {
         try (var input = getClass().getResourceAsStream("/excel/personnel-archive-template-v1.xlsx");
              var workbook = new XSSFWorkbook(input); var output = new ByteArrayOutputStream()) {
@@ -367,18 +514,18 @@ class PersonnelArchiveFlowIntegrationTest {
             main.getRow(1).getCell(1).setCellValue(EMPLOYEE_NO);
             main.getRow(2).getCell(1).setCellValue(PERSON_NAME);
             main.getRow(2).getCell(3).setCellValue("女");
-            main.getRow(2).getCell(5).setCellValue("2000-01-01");
+            main.getRow(2).getCell(5).setCellValue("二〇〇〇年");
             main.getRow(2).getCell(7).setCellValue("汉族");
             main.getRow(3).getCell(1).setCellValue("湖南长沙");
             main.getRow(3).getCell(3).setCellValue("湖南长沙");
             main.getRow(3).getCell(5).setCellValue("中共党员");
-            main.getRow(3).getCell(7).setCellValue("2021-07-01");
+            main.getRow(3).getCell(7).setCellValue("二〇二一年七月");
             main.getRow(4).getCell(1).setCellValue("测试单位 / 测试部门");
-            main.getRow(4).getCell(5).setCellValue("2020-01-01");
-            main.getRow(4).getCell(7).setCellValue("2021-01-01");
+            main.getRow(4).getCell(5).setCellValue("二〇二〇.一.一");
+            main.getRow(4).getCell(7).setCellValue("二〇二一年");
             main.getRow(5).getCell(1).setCellValue("测试职务");
             main.getRow(5).getCell(5).setCellValue("测试技能");
-            main.getRow(5).getCell(7).setCellValue("2022-01-01");
+            main.getRow(5).getCell(7).setCellValue("二〇二二年一月");
             main.getRow(6).getCell(1).setCellValue(IDENTITY_CARD);
             main.getRow(6).getCell(5).setCellValue("已婚");
             main.getRow(6).getCell(7).setCellValue("健康");
@@ -389,22 +536,27 @@ class PersonnelArchiveFlowIntegrationTest {
             main.getRow(11).getCell(1).setCellValue("测试地址");
             main.getRow(11).getCell(5).setCellValue("410000");
             main.getRow(11).getCell(7).setCellValue(phone);
-            main.getRow(12).getCell(1).setCellValue("2020.09-2024.06");
+            main.getRow(12).getCell(1).setCellValue("二〇二〇年九月至二〇二四年六月");
             main.getRow(12).getCell(3).setCellValue("示例大学");
-            main.getRow(17).getCell(1).setCellValue("2024.07-至今");
+            main.getRow(17).getCell(1).setCellValue("二〇二四年七月至今");
             main.getRow(17).getCell(3).setCellValue(workDescription);
-            main.getRow(33).getCell(1).setCellValue("2025.01");
+            main.getRow(33).getCell(1).setCellValue("二〇二五年一月二日");
             main.getRow(33).getCell(3).setCellValue("测试奖励");
             main.getRow(38).getCell(1).setCellValue("测试称谓");
             main.getRow(38).getCell(2).setCellValue("测试乙");
-            main.getRow(38).getCell(3).setCellValue(25);
+            main.getRow(38).getCell(3).setCellValue("三十五岁");
             main.getRow(38).getCell(4).setCellValue("测试面貌");
             main.getRow(38).getCell(5).setCellValue("测试单位及职务");
-            main.getRow(45).getCell(1).setCellValue("承诺人：测试甲  时间：2026年7月22日");
+            main.getRow(39).getCell(1).setCellValue("朋友");
+            main.getRow(39).getCell(2).setCellValue("模糊年龄成员");
+            main.getRow(39).getCell(3).setCellValue("30岁");
+            main.getRow(39).getCell(4).setCellValue("群众");
+            main.getRow(39).getCell(5).setCellValue("测试单位");
+            main.getRow(45).getCell(1).setCellValue("承诺人：测试甲  时间：二〇二六年七月二十二日");
             var helper = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
             helper.getRow(1).getCell(1).setCellValue("测试称谓");
             helper.getRow(1).getCell(2).setCellValue("测试乙");
-            helper.getRow(1).getCell(3).setCellValue("2000-07-23");
+            helper.getRow(1).getCell(3).setCellValue("二〇〇〇年七月二十三日");
             var image = new BufferedImage(3, 4, BufferedImage.TYPE_INT_RGB);
             var imageBytes = new ByteArrayOutputStream();
             ImageIO.write(image, "png", imageBytes);

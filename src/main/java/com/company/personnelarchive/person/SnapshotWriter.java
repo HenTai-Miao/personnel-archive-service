@@ -2,6 +2,9 @@ package com.company.personnelarchive.person;
 
 import com.company.personnelarchive.archiveimport.ArchiveDocument;
 import com.company.personnelarchive.archiveimport.ExcelTemplateV1;
+import com.company.personnelarchive.archiveimport.SourceDate;
+import com.company.personnelarchive.archiveimport.SourceValueNormalizerV3;
+import com.company.personnelarchive.archiveimport.SourceValueNormalizerV4;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
 import com.company.personnelarchive.configuration.ArchiveProperties;
@@ -11,6 +14,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.Set;
 
 @Service
 /**
@@ -18,6 +22,7 @@ import java.time.LocalDate;
  * 调用方负责事务；本类保证同一根下的教育、履历、奖惩、家庭成员和照片完整写入。
  */
 public class SnapshotWriter {
+    private static final Set<String> PRESENT_MARKERS = Set.of("今", "现在", "至今");
     private final PersonMapper mapper;
     private final IdentityProtection protection;
     private final ArchiveProperties properties;
@@ -69,15 +74,15 @@ public class SnapshotWriter {
             row.idCardHmac = prepared.identityHmac();
             row.idCardLastFour = IdentityCard.lastFour(prepared.identityCard());
         }
-        row.gender = blankToNull(d.gender()); row.birthDate = blankToNull(d.birthDate().text());
+        row.gender = blankToNull(d.gender()); row.birthDate = dateProjection(d.birthDate());
         row.nation = blankToNull(d.ethnicity());
         row.nativePlace = blankToNull(d.nativePlace()); row.birthPlace = blankToNull(d.birthPlace());
         row.politicalStatus = blankToNull(d.politicalStatus());
-        row.politicalJoinDate = blankToNull(d.politicalJoinDate().text());
+        row.politicalJoinDate = dateProjection(d.politicalJoinDate());
         row.maritalStatus = blankToNull(d.maritalStatus()); row.healthStatus = blankToNull(d.healthStatus());
         row.mailingAddress = blankToNull(d.address()); row.postalCode = blankToNull(d.postalCode());
         row.phoneNumber = blankToNull(d.phone()); row.declarationSigner = blankToNull(d.declarationSigner());
-        row.declarationDate = blankToNull(d.declarationDate().text()); row.templateVersion = ExcelTemplateV1.VERSION;
+        row.declarationDate = dateProjection(d.declarationDate()); row.templateVersion = ExcelTemplateV1.VERSION;
         row.snapshotVersion = snapshotVersion; row.previousPersonId = previousPersonId; row.operatorId = operatorId;
         mapper.insertPerson(row);
         long personId = row.id;
@@ -90,26 +95,29 @@ public class SnapshotWriter {
         if (employment != null) {
             OrganizationDepartment organization = splitOrganizationDepartment(employment.organizationDepartment());
             mapper.insertEmployment(properties.tenantId(), personId,
-                organization.organization(), organization.department(), blankToNull(employment.workStartDate().text()),
-                blankToNull(employment.dispatchDate().text()), blankToNull(employment.position()),
-                blankToNull(employment.titleSkill()), blankToNull(employment.titleObtainedDate().text()));
+                organization.organization(), organization.department(), dateProjection(employment.workStartDate()),
+                dateProjection(employment.dispatchDate()), blankToNull(employment.position()),
+                blankToNull(employment.titleSkill()), dateProjection(employment.titleObtainedDate()));
         }
         writeSummary(personId, "FULL_TIME", d.fullTimeEducation());
         writeSummary(personId, "IN_SERVICE", d.inServiceEducation());
-        // raw_text 与 sort_order 是原样导出的依据，不能只保存解析后的开始/结束日期。
-        if (d.mainEducation() != null) d.mainEducation().forEach(item -> mapper.insertEducation(properties.tenantId(), personId,
-            "MAIN", null, null, null, null, item.startDate(), item.endDate(), item.rawText(), item.sortOrder() + 1));
-        if (d.workExperiences() != null) d.workExperiences().forEach(item ->
-            mapper.insertWork(properties.tenantId(), personId, item.startDate(), item.endDate(), blankToNull(item.rightText()),
-                item.rawText(), item.sortOrder() + 1));
-        if (d.rewardsPunishments() != null) d.rewardsPunishments().forEach(item ->
-            mapper.insertReward(properties.tenantId(), personId, item.startDate(), item.rawText(), item.sortOrder() + 1));
+        // raw_text 仍保留行内非日期文字和顺序，但日期片段必须与结构化标准值一致。
+        if (d.mainEducation() != null) d.mainEducation().forEach(item -> mapper.insertEducation(
+            properties.tenantId(), personId, "MAIN", null, null, null, null,
+            dateProjection(item.startDate()), dateProjection(item.endDate()), orderedRaw(item), item.sortOrder() + 1));
+        if (d.workExperiences() != null) d.workExperiences().forEach(item -> mapper.insertWork(
+            properties.tenantId(), personId, dateProjection(item.startDate()), dateProjection(item.endDate()),
+            blankToNull(item.rightText()), orderedRaw(item), item.sortOrder() + 1));
+        if (d.rewardsPunishments() != null) d.rewardsPunishments().forEach(item -> mapper.insertReward(
+            properties.tenantId(), personId, dateProjection(item.startDate()), orderedRaw(item), item.sortOrder() + 1));
         if (d.familyMembers() != null) d.familyMembers().forEach(member -> {
             String memberName = cleanOptional(member.name());
             String relationship = cleanOptional(member.relationship());
+            PersonMapper.DateProjection birthDate = dateProjection(member.birthDate());
+            PersonMapper.AgeProjection age = ageProjection(member.ageText());
             mapper.insertFamily(properties.tenantId(), personId, relationship, memberName, NameNormalizer.normalize(memberName),
-                blankToNull(member.birthDate().text()), blankToNull(member.ageText()),
-                blankToNull(member.politicalStatus()), blankToNull(member.workplacePosition()), familyRaw(member), member.sortOrder() + 1);
+                birthDate, age, blankToNull(member.politicalStatus()), blankToNull(member.workplacePosition()),
+                familyRaw(member, birthDate, age), member.sortOrder() + 1);
         });
         if (d.photo() != null) {
             // 照片以原始 BLOB 保存；哈希、尺寸、MIME 和锚点用于校验及无损重建，不转 Base64。
@@ -124,7 +132,8 @@ public class SnapshotWriter {
     private void writeSummary(long personId, String type, ArchiveDocument.EducationSummary summary) {
         if (summary == null) return;
         mapper.insertEducation(properties.tenantId(), personId, type, blankToNull(summary.school()), blankToNull(summary.major()),
-            blankToNull(summary.education()), blankToNull(summary.degree()), null, null, null, 0);
+            blankToNull(summary.education()), blankToNull(summary.degree()), PersonMapper.DateProjection.empty(),
+            PersonMapper.DateProjection.empty(), null, 0);
     }
 
     private static OrganizationDepartment splitOrganizationDepartment(String raw) {
@@ -138,15 +147,47 @@ public class SnapshotWriter {
 
     private record OrganizationDepartment(String organization, String department) {}
 
-    private static String familyRaw(ArchiveDocument.FamilyMember m) {
+    private static String familyRaw(
+        ArchiveDocument.FamilyMember m, PersonMapper.DateProjection birthDate, PersonMapper.AgeProjection age
+    ) {
         return String.join("\t", nullToEmpty(m.relationship()), nullToEmpty(m.name()),
-            m.birthDate().text(), nullToEmpty(m.ageText()), nullToEmpty(m.politicalStatus()),
+            nullToEmpty(birthDate.text()), nullToEmpty(age.text()), nullToEmpty(m.politicalStatus()),
             nullToEmpty(m.workplacePosition()));
+    }
+
+    private static String orderedRaw(ArchiveDocument.OrderedText item) {
+        String left = cleanOptional(item.leftText());
+        if (!left.isEmpty()) left = SourceValueNormalizerV4.normalizeDateRange(left).text();
+        String right = cleanOptional(item.rightText());
+        return left.isEmpty() ? right : right.isEmpty() ? left : left + "\t" + right;
     }
 
     private static String cleanOptional(String value) { return value == null ? "" : value.strip(); }
     private static String blankToNull(String value) { return value == null || value.strip().isEmpty() ? null : value.strip(); }
     private static String nullToEmpty(String value) { return value == null ? "" : value; }
+
+    private static PersonMapper.DateProjection dateProjection(SourceDate source) {
+        if (source == null) return PersonMapper.DateProjection.empty();
+        return dateProjection(source.text());
+    }
+
+    private static PersonMapper.DateProjection dateProjection(String raw) {
+        String text = blankToNull(raw);
+        if (text == null) return PersonMapper.DateProjection.empty();
+        if (PRESENT_MARKERS.contains(text)) return new PersonMapper.DateProjection("至今", null, null, null);
+        SourceDate normalized = SourceValueNormalizerV3.normalizeDate(text);
+        return new PersonMapper.DateProjection(normalized.text(),
+            normalized.year() == null ? null : normalized.year().getValue(),
+            normalized.yearMonth() == null ? null : normalized.yearMonth().getMonthValue(),
+            normalized.exactDate() == null ? null : normalized.exactDate().getDayOfMonth());
+    }
+
+    private static PersonMapper.AgeProjection ageProjection(String raw) {
+        String text = blankToNull(raw);
+        if (text == null) return PersonMapper.AgeProjection.empty();
+        var age = SourceValueNormalizerV3.normalizeAge(text);
+        return new PersonMapper.AgeProjection(age.text(), age.value());
+    }
 
     private static byte[] sha256(byte[] bytes) {
         try { return MessageDigest.getInstance("SHA-256").digest(bytes); }

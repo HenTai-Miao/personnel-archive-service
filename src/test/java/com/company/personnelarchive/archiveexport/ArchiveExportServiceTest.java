@@ -1,4 +1,4 @@
-/* Excel 导出测试：重开生成工作簿并核对字段、原始行、布局及照片还原。 */
+/* Excel 导出测试：重开生成工作簿并核对字段、标准值、布局及照片还原。 */
 package com.company.personnelarchive.archiveexport;
 
 import com.company.personnelarchive.archiveimport.ArchiveDocument;
@@ -34,7 +34,7 @@ import static org.mockito.Mockito.when;
 
 class ArchiveExportServiceTest {
     @Test
-    void preservesSourceDateAndFamilyAges() throws Exception {
+    void writesCanonicalDateAndFamilyAgeValues() throws Exception {
         ArchiveProperties properties = new ArchiveProperties(1,
             new ArchiveProperties.Security(Duration.ofMinutes(15), Duration.ofDays(7), 1000,
                 "x".repeat(32), "h".repeat(32),
@@ -47,13 +47,13 @@ class ArchiveExportServiceTest {
         AuditService audit = mock(AuditService.class);
         PersonReadMapper.PersonRow person = new PersonReadMapper.PersonRow(
             7, "T-001", "测试甲", null, null, "女", "1980", "汉族", "测试籍贯",
-            "测试出生地", "群众", "2002.10", "已婚", "健康", "测试地址", "000000",
-            "00000000", "测试甲", "2026年7月22日", "V1", 1,
+            "测试出生地", "群众", "2002-10", "已婚", "健康", "测试地址", "000000",
+            "00000000", "测试甲", "2026-07-22", "V1", 1,
             Instant.parse("2026-07-21T00:00:00Z"));
-        List<String> ages = List.of("36", "11", "62", "63", "59", "57");
+        List<String> ages = List.of("35", "11", "62", "63", "59", "57");
         List<PersonReadMapper.FamilyRow> family = IntStream.range(0, ages.size())
             .mapToObj(index -> new PersonReadMapper.FamilyRow(index + 1L, "称谓" + index, "成员" + index,
-                index == 0 ? "1990.02" : "", ages.get(index), "群众", "测试单位", "", index + 1))
+                index == 0 ? "1990-02" : "", ages.get(index), "群众", "测试单位", "", index + 1))
             .toList();
         when(mapper.findActive(1, 7)).thenReturn(person);
         when(mapper.findEducation(1, 7)).thenReturn(List.of());
@@ -70,13 +70,17 @@ class ArchiveExportServiceTest {
             var main = workbook.getSheet(ExcelTemplateV1.MAIN_SHEET);
             var helper = workbook.getSheet(ExcelTemplateV1.AGE_SHEET);
             assertThat(formatter.formatCellValue(main.getRow(2).getCell(5))).isEqualTo("1980");
-            assertThat(formatter.formatCellValue(main.getRow(3).getCell(7))).isEqualTo("2002.10");
+            assertThat(formatter.formatCellValue(main.getRow(3).getCell(7))).isEqualTo("2002-10");
             assertThat(formatter.formatCellValue(main.getRow(45).getCell(1)))
-                .contains("2026年7月22日");
-            assertThat(formatter.formatCellValue(helper.getRow(1).getCell(3))).isEqualTo("1990.02");
-            assertThat(IntStream.range(0, ages.size())
+                .contains("2026-07-22");
+            assertThat(formatter.formatCellValue(helper.getRow(1).getCell(3))).isEqualTo("1990-02");
+            List<String> exportedAges = IntStream.range(0, ages.size())
                 .mapToObj(index -> formatter.formatCellValue(main.getRow(38 + index).getCell(3)))
-                .toList()).containsExactlyElementsOf(ages);
+                .toList();
+            assertThat(exportedAges).containsExactlyElementsOf(ages);
+            assertThat(exportedAges).allSatisfy(age -> assertThat(age).doesNotContain("岁"));
+            assertThat(formatter.formatCellValue(main.getRow(2).getCell(5))).doesNotContain("-");
+            assertThat(formatter.formatCellValue(main.getRow(3).getCell(7))).matches("\\d{4}-\\d{2}");
         }
     }
 
@@ -190,7 +194,7 @@ class ArchiveExportServiceTest {
         AuditService audit = mock(AuditService.class);
         PersonReadMapper.PersonRow person = new PersonReadMapper.PersonRow(7, "T-010", "测试十人", null, null,
             null, null, null, null, null, null, null, null, null, null, null, null, "测试十人",
-            "2026年7月22日", "V1", 1, Instant.parse("2026-07-21T00:00:00Z"));
+            "2026-07-22", "V1", 1, Instant.parse("2026-07-21T00:00:00Z"));
         List<PersonReadMapper.FamilyRow> family = IntStream.rangeClosed(1, 10)
             .mapToObj(index -> new PersonReadMapper.FamilyRow(index, "称谓" + index, "成员" + index,
                 index == 10 ? null : "2000-07-" + String.format("%02d", index), "", "群众",
@@ -217,7 +221,7 @@ class ArchiveExportServiceTest {
             assertThat(main.getMergedRegions().stream().map(CellRangeAddress::formatAsString))
                 .contains("A38:A48", "F48:I48", "A49:I49", "B50:I50");
             assertThat(main.getRow(49).getCell(1).getStringCellValue())
-                .contains("承诺人：测试十人", "2026年7月22日");
+                .contains("承诺人：测试十人", "2026-07-22");
             assertThat(main.getRowBreaks()).containsExactly(60, 104);
         }
         ArchiveDocument reopened = new ExcelArchiveReader(properties).read(

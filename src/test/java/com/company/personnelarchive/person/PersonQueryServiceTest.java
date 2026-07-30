@@ -1,4 +1,4 @@
-/* 人员详情查询测试：锁定全部导入分区映射、原文列还原和照片读取边界。 */
+/* 人员详情查询测试：锁定全部导入分区映射、标准业务值还原和照片读取边界。 */
 package com.company.personnelarchive.person;
 
 import com.company.personnelarchive.audit.AuditService;
@@ -28,19 +28,19 @@ class PersonQueryServiceTest {
         when(mapper.findActive(1, 7)).thenReturn(personRow);
         when(identityProtection.decrypt(personRow.idCardCiphertext())).thenReturn("123456789012345678");
         when(mapper.findEmployment(1, 7)).thenReturn(new PersonReadMapper.EmploymentRow(
-            "测试单位", "测试部门", "2020.01", "2021.01",
-            "测试职务", "测试技能", "2022.01"));
+            "测试单位", "测试部门", "2020-01", "2021-01",
+            "测试职务", "测试技能", "2022-01"));
         when(mapper.findEducation(1, 7)).thenReturn(List.of(
             new PersonReadMapper.EducationRow("FULL_TIME", "全日制大学", "档案学", "本科", "学士", null, null, null, 0),
             new PersonReadMapper.EducationRow("IN_SERVICE", "在职大学", "管理学", "研究生", "硕士", null, null, null, 0),
             new PersonReadMapper.EducationRow("MAIN", null, null, null, null,
-                "2020.09", "2024.06", "2020.09-2024.06\t示例大学", 1)));
+                "2020-09", "2024-06", "2020-09—2024-06\t示例大学", 1)));
         when(mapper.findWork(1, 7)).thenReturn(List.of(new PersonReadMapper.WorkRow(
-            "2024.07", "至今", "覆盖版本", "2024.07-至今\t覆盖版本", 1)));
+            "2024-07", "至今", "覆盖版本", "2024-07—至今\t覆盖版本", 1)));
         when(mapper.findRewards(1, 7)).thenReturn(List.of(new PersonReadMapper.RewardRow(
-            "2025.01", "2025.01\t测试奖励", 1)));
+            "2025-01", "2025-01\t测试奖励", 1)));
         when(mapper.findFamily(1, 7)).thenReturn(List.of(new PersonReadMapper.FamilyRow(
-            11, "测试称谓", "测试乙", "2000-07-23", "36", "测试面貌", "测试单位及职务", "", 1)));
+            11, "测试称谓", "测试乙", "2000-01", "35", "测试面貌", "测试单位及职务", "", 1)));
         when(mapper.findPhotoMetadata(1, 7)).thenReturn(new PersonReadMapper.PhotoMetadataRow(
             "image/png", "fixture-photo.png", 128, 3, 4));
         var service = new PersonQueryService(mapper, properties(), audit, identityProtection);
@@ -49,18 +49,20 @@ class PersonQueryServiceTest {
         PersonDtos.Detail detail = service.detail(7, 9);
 
         // Then
-        assertThat(detail.personal().birthDate()).isEqualTo("2000.01");
-        assertThat(detail.personal().politicalJoinDate()).isEqualTo("2021.07");
-        assertThat(detail.employment().workStartDate()).isEqualTo("2020.01");
+        assertThat(detail.personal().birthDate()).isEqualTo("2000-01");
+        assertThat(detail.personal().politicalJoinDate()).isEqualTo("2021-07");
+        assertThat(detail.employment().workStartDate()).isEqualTo("2020-01");
         assertThat(detail.education().fullTime().institutionName()).isEqualTo("全日制大学");
         assertThat(detail.education().inService().degreeName()).isEqualTo("硕士");
         assertThat(detail.mainEducation().getFirst().rightText()).isEqualTo("示例大学");
+        assertThat(detail.workExperiences().getFirst().leftText()).isEqualTo("2024-07—至今");
         assertThat(detail.workExperiences().getFirst().rightText()).isEqualTo("覆盖版本");
         assertThat(detail.rewardsPunishments().getFirst().rightText()).isEqualTo("测试奖励");
         assertThat(detail.familyMembers().getFirst().politicalStatus()).isEqualTo("测试面貌");
-        assertThat(detail.familyMembers().getFirst().age()).isEqualTo("36");
+        assertThat(detail.familyMembers().getFirst().birthDate()).isEqualTo("2000-01");
+        assertThat(detail.familyMembers().getFirst().age()).isEqualTo("35");
         assertThat(detail.declaration().signer()).isEqualTo("测试甲");
-        assertThat(detail.declaration().date()).isEqualTo("2026年7月22日");
+        assertThat(detail.declaration().date()).isEqualTo("2026-07-22");
         assertThat(detail.photo().mimeType()).isEqualTo("image/png");
         assertThat(detail.archive().snapshotVersion()).isEqualTo(2);
         assertThat(detail.identityCardMasked()).isEqualTo("1234***********678");
@@ -190,9 +192,9 @@ class PersonQueryServiceTest {
 
     private static PersonReadMapper.PersonRow personRow() {
         return new PersonReadMapper.PersonRow(
-            7, "E-001", "测试甲", new byte[]{1}, "0012", "女", "2000.01", "汉族",
-            "湖南长沙", "湖南长沙", "中共党员", "2021.07", "已婚", "健康",
-            "测试地址", "410000", "13800138000", "测试甲", "2026年7月22日",
+            7, "E-001", "测试甲", new byte[]{1}, "0012", "女", "2000-01", "汉族",
+            "湖南长沙", "湖南长沙", "中共党员", "2021-07", "已婚", "健康",
+            "测试地址", "410000", "13800138000", "测试甲", "2026-07-22",
             "V1", 2, Instant.parse("2026-07-22T03:00:00Z"));
     }
 

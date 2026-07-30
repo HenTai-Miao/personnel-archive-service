@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: 人员档案数据服务 API
-  version: 1.8.0
-  description: 业务日期和字面家庭年龄使用 Excel 来源可见文本，不补日；模板精确 DATEDIF/TODAY 年龄公式仅在导入时冻结 Excel 当前显示值，查询、展示和导出不重算。时间戳是从 Asia/Shanghai 数据库时间映射得到的 UTC ISO-8601 时间点。V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
+  version: 1.9.0
+  description: 非空业务日期和家庭年龄在导入时必须能够精确解释并标准化存储；年龄为十进制数字字符串，日期按来源精度分别为 yyyy、yyyy-MM、yyyy-MM-dd，不补造月或日。无法确定的非空值按文件返回字段级错误；模板精确 DATEDIF/TODAY 年龄公式仅在导入时冻结并标准化，查询、展示和导出不重算。时间戳是从 Asia/Shanghai 数据库时间映射得到的 UTC ISO-8601 时间点。V1 tenant_id 固定为 1。Excel 业务字段不设必填项，响应中的对应字符串可以为空。
 servers:
   - url: /api/v1
 security:
@@ -47,7 +47,7 @@ paths:
   /imports:
     post:
       operationId: importWorkbooks
-      description: 每个文件独立事务；原工作簿不保留。业务单元格允许为空，非空身份证仍校验格式。只有非空姓名与非空身份证同时匹配同一有效档案时才返回待覆盖/跳过；手动选择和自动文件夹来源使用相同规则。重复项仅在有界 TTL 内存中保留已解析结构。
+      description: 每个文件独立事务；原工作簿不保留。业务单元格允许为空，非空身份证仍校验格式。无法精确解释的非空年龄或日期使该文件失败，并在 IMPORT_FIELD_VALIDATION_FAILED 消息中逐行列出安全的字段名、工作表、单元格和修正提示；同批其他文件继续处理。只有非空姓名与非空身份证同时匹配同一有效档案时才返回待覆盖/跳过；手动选择和自动文件夹来源使用相同规则。重复项仅在有界 TTL 内存中保留已解析结构。
       requestBody:
         required: true
         content:
@@ -346,7 +346,7 @@ components:
         fileName: { type: string, minLength: 1 }
         status: { type: string, enum: [PENDING_DECISION, IMPORTED, OVERWRITTEN, SKIPPED, FAILED] }
         code: { type: string }
-        message: { type: string }
+        message: { type: string, description: 处理说明；code 为 IMPORT_FIELD_VALIDATION_FAILED 时包含按换行分隔的字段级安全错误。 }
         duplicate: { $ref: '#/components/schemas/DuplicateInfo' }
     ImportBatch:
       type: object
@@ -372,7 +372,7 @@ components:
           description: 仅含文件 basename，不含客户端目录路径。
         status: { type: string, enum: [PENDING_DECISION, IMPORTED, OVERWRITTEN, SKIPPED, FAILED] }
         code: { type: string }
-        message: { type: string }
+        message: { type: string, description: 永久保存的处理说明；code 为 IMPORT_FIELD_VALIDATION_FAILED 时包含按换行分隔的字段级安全错误。 }
         processedAt: { type: string, format: date-time }
     ImportHistoryPage:
       type: object
@@ -445,12 +445,12 @@ components:
       required: [gender, birthDate, nation, nativePlace, birthPlace, politicalStatus, politicalJoinDate, maritalStatus, healthStatus, mailingAddress, postalCode, phoneNumberMasked]
       properties:
         gender: { type: string }
-        birthDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
+        birthDate: { type: string, description: 已标准化业务日期；按来源精度为 yyyy、yyyy-MM 或 yyyy-MM-dd。 }
         nation: { type: string }
         nativePlace: { type: string }
         birthPlace: { type: string }
         politicalStatus: { type: string }
-        politicalJoinDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
+        politicalJoinDate: { type: string, description: 已标准化业务日期；按来源精度为 yyyy、yyyy-MM 或 yyyy-MM-dd。 }
         maritalStatus: { type: string }
         healthStatus: { type: string }
         mailingAddress: { type: string }
@@ -471,11 +471,11 @@ components:
       properties:
         organization: { type: string }
         department: { type: string }
-        workStartDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
-        dispatchedToBiddingCompanyDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
+        workStartDate: { type: string, description: 已标准化业务日期；按来源精度为 yyyy、yyyy-MM 或 yyyy-MM-dd。 }
+        dispatchedToBiddingCompanyDate: { type: string, description: 已标准化业务日期；按来源精度为 yyyy、yyyy-MM 或 yyyy-MM-dd。 }
         position: { type: string }
         titleOrSkill: { type: string }
-        titleOrSkillAcquiredDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
+        titleOrSkillAcquiredDate: { type: string, description: 已标准化业务日期；按来源精度为 yyyy、yyyy-MM 或 yyyy-MM-dd。 }
     EducationSummary:
       type: object
       additionalProperties: false
@@ -498,7 +498,7 @@ components:
       required: [sortOrder, leftText, rightText]
       properties:
         sortOrder: { type: integer, minimum: 1 }
-        leftText: { type: string }
+        leftText: { type: string, description: 日期或日期范围部分已标准化；闭区间统一为“起点—终点”，当前结束统一为“起点—至今”。 }
         rightText: { type: string }
     FamilyMember:
       type: object
@@ -507,8 +507,8 @@ components:
       properties:
         name: { type: string }
         relationship: { type: string }
-        birthDate: { type: string, description: Excel 来源可见文本；年、年月、年月日均按原精度返回。 }
-        age: { type: string, description: 家庭年龄字符串；字面值原样保存，模板精确 DATEDIF/TODAY 公式在导入时冻结 Excel 当前显示值，查询、展示和导出不重算。 }
+        birthDate: { type: string, description: 已标准化业务日期；按来源精度为 yyyy、yyyy-MM 或 yyyy-MM-dd。 }
+        age: { type: string, description: 已标准化精确年龄，仅含十进制数字；模板精确 DATEDIF/TODAY 公式在导入时冻结，查询、展示和导出不重算。 }
         politicalStatus: { type: string }
         organizationAndPosition: { type: string }
     DeclarationInfo:
@@ -517,7 +517,7 @@ components:
       required: [signer, date]
       properties:
         signer: { type: string }
-        date: { type: string, description: Excel 声明区中的来源日期文本；年、年月、年月日均按原精度返回。 }
+        date: { type: string, description: 已标准化声明日期；按来源精度为 yyyy、yyyy-MM 或 yyyy-MM-dd。 }
     PhotoMetadata:
       type: object
       additionalProperties: false
