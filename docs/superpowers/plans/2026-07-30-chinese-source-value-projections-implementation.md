@@ -1,14 +1,16 @@
-# Chinese Source-Value Projections Implementation Plan
+# Chinese Source-Value Projections Historical Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Preserve Chinese age/date source text while additionally storing deterministic numeric age and year/month/day projections for new and existing snapshots.
+> **Status: superseded by the V13 canonicalization contract.** This plan records the V9-V10 projection implementation; its source-authority and fuzzy-value rules are historical. Current precise nonblank ages/dates are canonicalized by `SourceValueNormalizerV3/V4`, while fuzzy nonblank values such as `三十多岁` fail the workbook instead of producing a `NULL` projection.
 
-**Architecture:** A frozen `SourceValueParserV1` deep module uses pinned Hutool Core for unit-style Chinese integers and project-owned grammar for digit-wise years, precision, ranges, and `java.time` validation. Flyway V9 adds nullable projections to MySQL and KingbaseES; V10 Java migrations reuse the frozen V1 semantics to backfill only deterministic historical values. Import and export keep all existing raw-string contracts.
+**Historical Goal (V9-V10):** Preserve Chinese age/date source text while additionally storing deterministic numeric age and year/month/day projections for new and existing snapshots.
+
+**Historical Architecture:** A frozen `SourceValueParserV1` deep module uses pinned Hutool Core for unit-style Chinese integers and project-owned grammar for digit-wise years, precision, ranges, and `java.time` validation. Flyway V9 adds nullable projections to MySQL and KingbaseES; V10 Java migrations reuse the frozen V1 semantics to backfill only deterministic historical values. Import and export keep the then-current raw-string contracts.
 
 **Tech Stack:** Java 21, Spring Boot 4.0.7, MyBatis, Apache POI, Hutool Core 5.8.46, Flyway, MySQL 8.4, KingbaseES SQL contract tests, JUnit 5, AssertJ, Mockito, Testcontainers.
 
-## Global Constraints
+## Historical Global Constraints (V9-V10)
 
 - Source text remains authoritative for API responses, UI display, search results, and XLSX reconstruction.
 - Never invent missing month/day values or derive age from birth date, identity card, or the current date.

@@ -8,9 +8,10 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -64,23 +65,20 @@ public final class CanonicalSourceValueBackfillV3 {
         Connection connection, String table, String personColumn, DateColumn... columns
     ) throws SQLException {
         String selected = Arrays.stream(columns).map(DateColumn::name).collect(Collectors.joining(","));
-        try (Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery(selectSql(table, personColumn, selected))) {
-            while (rows.next()) {
-                long id = rows.getLong("id");
-                for (DateColumn column : columns) {
-                    canonicalDate(table, id, column, rows.getString(column.name()));
-                }
+        processPages(connection, selectSql(table, personColumn, selected), (id, rows) -> {
+            for (DateColumn column : columns) {
+                canonicalDate(table, id, column, rows.getString(column.name()));
             }
-        }
+            return id;
+        }, ignored -> {});
     }
 
     private static void validateAges(Connection connection) throws SQLException {
-        try (Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery(selectSql(
-                 "pa_family_member", "person_id", "age_text"))) {
-            while (rows.next()) canonicalAge(rows.getLong("id"), rows.getString("age_text"));
-        }
+        processPages(connection, selectSql("pa_family_member", "person_id", "age_text"),
+            (id, rows) -> {
+                canonicalAge(id, rows.getString("age_text"));
+                return id;
+            }, ignored -> {});
     }
 
     private static void updateDates(
@@ -94,51 +92,46 @@ public final class CanonicalSourceValueBackfillV3 {
             .collect(Collectors.joining(","));
         String updateSql = "UPDATE " + table + " SET " + assignments + " WHERE id=?";
 
-        try (Statement select = connection.createStatement();
-             ResultSet rows = select.executeQuery(selectSql(table, personColumn, selected));
-             PreparedStatement update = connection.prepareStatement(updateSql)) {
-            int pending = 0;
-            while (rows.next()) {
-                int parameter = 1;
-                long id = rows.getLong("id");
+        try (PreparedStatement update = connection.prepareStatement(updateSql)) {
+            processPages(connection, selectSql(table, personColumn, selected), (id, rows) -> {
+                List<CanonicalDate> values = new ArrayList<>(columns.length);
                 for (DateColumn column : columns) {
-                    CanonicalDate value = canonicalDate(table, id, column, rows.getString(column.name()));
-                    setString(update, parameter++, value.text());
-                    setSmallInt(update, parameter++, value.year());
-                    setSmallInt(update, parameter++, value.month());
-                    setSmallInt(update, parameter++, value.day());
+                    values.add(canonicalDate(table, id, column, rows.getString(column.name())));
                 }
-                update.setLong(parameter, id);
-                update.addBatch();
-                if (++pending == BATCH_SIZE) {
-                    update.executeBatch();
-                    pending = 0;
+                return new PendingDateUpdate(id, values);
+            }, page -> {
+                for (PendingDateUpdate row : page) {
+                    int parameter = 1;
+                    for (CanonicalDate value : row.values()) {
+                        setString(update, parameter++, value.text());
+                        setSmallInt(update, parameter++, value.year());
+                        setSmallInt(update, parameter++, value.month());
+                        setSmallInt(update, parameter++, value.day());
+                    }
+                    update.setLong(parameter, row.id());
+                    update.addBatch();
                 }
-            }
-            if (pending > 0) update.executeBatch();
+                update.executeBatch();
+                update.clearBatch();
+            });
         }
     }
 
     private static void updateAges(Connection connection) throws SQLException {
-        try (Statement select = connection.createStatement();
-             ResultSet rows = select.executeQuery(selectSql(
-                 "pa_family_member", "person_id", "age_text"));
-             PreparedStatement update = connection.prepareStatement(
-                 "UPDATE pa_family_member SET age_text=?,age_value=? WHERE id=?")) {
-            int pending = 0;
-            while (rows.next()) {
-                long id = rows.getLong("id");
-                CanonicalAge age = canonicalAge(id, rows.getString("age_text"));
-                setString(update, 1, age.text());
-                setSmallInt(update, 2, age.value());
-                update.setLong(3, id);
-                update.addBatch();
-                if (++pending == BATCH_SIZE) {
-                    update.executeBatch();
-                    pending = 0;
+        try (PreparedStatement update = connection.prepareStatement(
+            "UPDATE pa_family_member SET age_text=?,age_value=? WHERE id=?")) {
+            processPages(connection, selectSql("pa_family_member", "person_id", "age_text"),
+                (id, rows) -> new PendingAgeUpdate(id,
+                    canonicalAge(id, rows.getString("age_text"))), page -> {
+                for (PendingAgeUpdate row : page) {
+                    setString(update, 1, row.age().text());
+                    setSmallInt(update, 2, row.age().value());
+                    update.setLong(3, row.id());
+                    update.addBatch();
                 }
-            }
-            if (pending > 0) update.executeBatch();
+                update.executeBatch();
+                update.clearBatch();
+            });
         }
     }
 
@@ -160,12 +153,9 @@ public final class CanonicalSourceValueBackfillV3 {
             + (rightColumn == null ? "" : "," + rightColumn);
         String sql = selectSql(table, personColumn, selected);
         if (extraCondition != null) sql = sql.replace(" ORDER BY", " AND " + extraCondition + " ORDER BY");
-        try (Statement select = connection.createStatement();
-             ResultSet rows = select.executeQuery(sql);
-             PreparedStatement update = connection.prepareStatement(
-                 "UPDATE " + table + " SET " + rawColumn + "=? WHERE id=?")) {
-            int pending = 0;
-            while (rows.next()) {
+        try (PreparedStatement update = connection.prepareStatement(
+            "UPDATE " + table + " SET " + rawColumn + "=? WHERE id=?")) {
+            processPages(connection, sql, (id, rows) -> {
                 String start = blankToNull(rows.getString("start_date"));
                 String end = blankToNull(rows.getString("end_date"));
                 String original = rows.getString(rawColumn);
@@ -173,39 +163,38 @@ public final class CanonicalSourceValueBackfillV3 {
                 String right = rightColumn == null
                     ? rawRangeTail(original, left)
                     : nullToEmpty(rows.getString(rightColumn));
-                setString(update, 1, combine(left, right, original));
-                update.setLong(2, rows.getLong("id"));
-                update.addBatch();
-                if (++pending == BATCH_SIZE) {
-                    update.executeBatch();
-                    pending = 0;
+                return new PendingTextUpdate(id, combine(left, right, original));
+            }, page -> {
+                for (PendingTextUpdate row : page) {
+                    setString(update, 1, row.text());
+                    update.setLong(2, row.id());
+                    update.addBatch();
                 }
-            }
-            if (pending > 0) update.executeBatch();
+                update.executeBatch();
+                update.clearBatch();
+            });
         }
     }
 
     private static void rebuildRewardRawText(Connection connection) throws SQLException {
         String sql = selectSql(
             "pa_reward_punishment", "person_id", "occurred_date,raw_text");
-        try (Statement select = connection.createStatement();
-             ResultSet rows = select.executeQuery(sql);
-             PreparedStatement update = connection.prepareStatement(
-                 "UPDATE pa_reward_punishment SET raw_text=? WHERE id=?")) {
-            int pending = 0;
-            while (rows.next()) {
+        try (PreparedStatement update = connection.prepareStatement(
+            "UPDATE pa_reward_punishment SET raw_text=? WHERE id=?")) {
+            processPages(connection, sql, (id, rows) -> {
                 String date = blankToNull(rows.getString("occurred_date"));
                 String original = rows.getString("raw_text");
                 String right = rawDateTail(original, date);
-                setString(update, 1, combine(nullToEmpty(date), right, original));
-                update.setLong(2, rows.getLong("id"));
-                update.addBatch();
-                if (++pending == BATCH_SIZE) {
-                    update.executeBatch();
-                    pending = 0;
+                return new PendingTextUpdate(id, combine(nullToEmpty(date), right, original));
+            }, page -> {
+                for (PendingTextUpdate row : page) {
+                    setString(update, 1, row.text());
+                    update.setLong(2, row.id());
+                    update.addBatch();
                 }
-            }
-            if (pending > 0) update.executeBatch();
+                update.executeBatch();
+                update.clearBatch();
+            });
         }
     }
 
@@ -213,12 +202,9 @@ public final class CanonicalSourceValueBackfillV3 {
         String sql = selectSql("pa_family_member", "person_id", """
             relationship_name,member_name,birth_date,age_text,political_status,organization_and_position
             """.replace("\n", "").strip());
-        try (Statement select = connection.createStatement();
-             ResultSet rows = select.executeQuery(sql);
-             PreparedStatement update = connection.prepareStatement(
-                 "UPDATE pa_family_member SET raw_text=? WHERE id=?")) {
-            int pending = 0;
-            while (rows.next()) {
+        try (PreparedStatement update = connection.prepareStatement(
+            "UPDATE pa_family_member SET raw_text=? WHERE id=?")) {
+            processPages(connection, sql, (id, rows) -> {
                 String raw = String.join("\t",
                     nullToEmpty(rows.getString("relationship_name")),
                     nullToEmpty(rows.getString("member_name")),
@@ -226,15 +212,44 @@ public final class CanonicalSourceValueBackfillV3 {
                     nullToEmpty(rows.getString("age_text")),
                     nullToEmpty(rows.getString("political_status")),
                     nullToEmpty(rows.getString("organization_and_position")));
-                update.setString(1, raw);
-                update.setLong(2, rows.getLong("id"));
-                update.addBatch();
-                if (++pending == BATCH_SIZE) {
-                    update.executeBatch();
-                    pending = 0;
+                return new PendingTextUpdate(id, raw);
+            }, page -> {
+                for (PendingTextUpdate row : page) {
+                    update.setString(1, row.text());
+                    update.setLong(2, row.id());
+                    update.addBatch();
                 }
+                update.executeBatch();
+                update.clearBatch();
+            });
+        }
+    }
+
+    /**
+     * Materializes at most one bounded page, closes its result set, then hands the page to its
+     * consumer. The order is deliberate: MySQL must never buffer an unbounded scan, and neither
+     * supported database may execute page updates while the page cursor remains open.
+     */
+    private static <T> void processPages(
+        Connection connection, String selectSql, RowMapper<T> mapper, PageConsumer<T> consumer
+    ) throws SQLException {
+        try (PreparedStatement select = connection.prepareStatement(selectSql)) {
+            long afterId = 0;
+            while (true) {
+                select.setLong(1, afterId);
+                List<T> page = new ArrayList<>(BATCH_SIZE);
+                long pageLastId = afterId;
+                try (ResultSet rows = select.executeQuery()) {
+                    while (rows.next()) {
+                        long id = rows.getLong("id");
+                        pageLastId = id;
+                        page.add(mapper.map(id, rows));
+                    }
+                }
+                if (pageLastId == afterId) return;
+                consumer.accept(page);
+                afterId = pageLastId;
             }
-            if (pending > 0) update.executeBatch();
         }
     }
 
@@ -277,7 +292,7 @@ public final class CanonicalSourceValueBackfillV3 {
             : "SELECT t.id," + qualifiedColumns + " FROM " + table
                 + " t JOIN pa_person p ON p.id=t." + personColumn
                 + " AND p.tenant_id=t.tenant_id WHERE p.is_deleted=0";
-        return prefix + " ORDER BY t.id";
+        return prefix + " AND t.id>? ORDER BY t.id LIMIT " + BATCH_SIZE;
     }
 
     private static String rangeText(String start, String end) throws SQLException {
@@ -348,7 +363,23 @@ public final class CanonicalSourceValueBackfillV3 {
         return new DateColumn(name, true);
     }
 
+    @FunctionalInterface
+    private interface RowMapper<T> {
+        T map(long id, ResultSet rows) throws SQLException;
+    }
+
+    @FunctionalInterface
+    private interface PageConsumer<T> {
+        void accept(List<T> page) throws SQLException;
+    }
+
     private record DateColumn(String name, boolean allowPresent) {}
+
+    private record PendingDateUpdate(long id, List<CanonicalDate> values) {}
+
+    private record PendingAgeUpdate(long id, CanonicalAge age) {}
+
+    private record PendingTextUpdate(long id, String text) {}
 
     private record CanonicalDate(String text, Integer year, Integer month, Integer day) {
         private static final CanonicalDate EMPTY = new CanonicalDate(null, null, null, null);
