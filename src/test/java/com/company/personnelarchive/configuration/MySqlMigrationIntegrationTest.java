@@ -36,6 +36,31 @@ class MySqlMigrationIntegrationTest {
             """, String.class)).isEqualTo("longtext");
         Integer tableCount = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='personnel_archive' AND table_name NOT LIKE 'flyway%'", Integer.class);
         assertThat(tableCount).isEqualTo(15);
+        var defaultAdmin = jdbc.queryForMap("""
+            SELECT username,normalized_username,password_hash,display_name,
+                   failed_login_count,locked_until
+            FROM sys_user
+            WHERE tenant_id=1 AND normalized_username='hr_6298bc833379'
+            """);
+        assertThat(defaultAdmin)
+            .containsEntry("username", "hr_6298bc833379")
+            .containsEntry("normalized_username", "hr_6298bc833379")
+            .containsEntry("password_hash", DefaultAdminMigrationContractTest.DEFAULT_PASSWORD_HASH)
+            .containsEntry("display_name", "人资部门")
+            .containsEntry("failed_login_count", 0)
+            .containsEntry("locked_until", null);
+        assertThat(jdbc.queryForObject("""
+            SELECT is_enabled + 0
+            FROM sys_user
+            WHERE tenant_id=1 AND normalized_username='hr_6298bc833379'
+            """, Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM sys_user_role ur
+            JOIN sys_user u ON u.id=ur.user_id AND u.tenant_id=ur.tenant_id
+            JOIN sys_role r ON r.id=ur.role_id AND r.tenant_id=ur.tenant_id
+            WHERE u.normalized_username='hr_6298bc833379' AND r.role_code='ADMIN'
+            """, Integer.class)).isEqualTo(1);
         jdbc.update("INSERT INTO sys_user (tenant_id,username,normalized_username,password_hash,display_name) VALUES (1,'test_admin','test_admin','not-a-runtime-hash','测试管理员')");
         long userId = jdbc.queryForObject("SELECT id FROM sys_user WHERE normalized_username='test_admin'", Long.class);
         byte[] hmac = new byte[32]; Arrays.fill(hmac, (byte) 7);
