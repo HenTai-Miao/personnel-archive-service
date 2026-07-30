@@ -27,10 +27,7 @@ class MySqlTimestampMappingIntegrationTest {
         .withPassword("test_password");
 
     @ParameterizedTest(name = "{0} maps China wall-clock DATETIME to the correct instant")
-    @ValueSource(strings = {
-        "src/main/resources/application.yml",
-        "config/application-local.yml"
-    })
+    @ValueSource(strings = "src/main/resources/application-dev.yml")
     void mapsChinaWallClockDatetimeToCorrectInstant(String configPath) throws IOException {
         // Given
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(

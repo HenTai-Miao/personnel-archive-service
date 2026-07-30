@@ -1,13 +1,10 @@
 spring:
   application:
     name: personnel-archive-service
-  datasource:
-    url: ${PA_DB_URL:jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai}
-    username: ${PA_DB_USERNAME:personnel_archive}
-    password: ${PA_DB_PASSWORD:}
+  profiles:
+    default: dev
   flyway:
     enabled: true
-    locations: classpath:db/migration
   servlet:
     multipart:
       max-file-size: 12MB

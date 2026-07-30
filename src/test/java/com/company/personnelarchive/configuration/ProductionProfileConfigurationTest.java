@@ -1,4 +1,4 @@
-/* 生产配置回归测试：prod 使用明确的五位端口，同时保留环境覆盖和本地默认值。 */
+/* 环境配置回归测试：公共/dev/prod 各自只承担约定的配置职责。 */
 package com.company.personnelarchive.configuration;
 
 import org.junit.jupiter.api.Test;
@@ -8,8 +8,11 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.mock.env.MockEnvironment;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,7 +21,9 @@ class ProductionProfileConfigurationTest {
     void usesFiveDigitPortInEveryEnvironment() throws IOException {
         assertThat(resolvedServerPort(null, "src/main/resources/application.yml"))
             .isEqualTo("18080");
-        assertThat(resolvedServerPort(null, "config/application-local.yml"))
+        assertThat(resolvedServerPort(null,
+            "src/main/resources/application.yml",
+            "src/main/resources/application-dev.yml"))
             .isEqualTo("18080");
         assertThat(resolvedServerPort(null,
             "src/main/resources/application.yml",
@@ -35,11 +40,38 @@ class ProductionProfileConfigurationTest {
     }
 
     @Test
-    void usesKingbaseForProductionAndKeepsMysqlForLocal() throws IOException {
+    void keepsDatabaseSettingsOutOfCommonConfiguration() throws IOException {
+        assertThat(optionalProperty("spring.datasource.url", Map.of(),
+            "src/main/resources/application.yml")).isEmpty();
+        assertThat(optionalProperty("spring.flyway.locations", Map.of(),
+            "src/main/resources/application.yml")).isEmpty();
+        assertThat(resolvedProperty("spring.profiles.default", Map.of(),
+            "src/main/resources/application.yml")).isEqualTo("dev");
+    }
+
+    @Test
+    void usesMysqlForDevWithoutAPlaintextBootstrapPassword() throws IOException {
+        assertThat(Path.of("src/main/resources/application-dev.yml")).exists();
         assertThat(resolvedProperty("spring.datasource.url", Map.of(),
             "src/main/resources/application.yml",
-            "config/application-local.yml"))
+            "src/main/resources/application-dev.yml"))
             .startsWith("jdbc:mysql://127.0.0.1:3306/personnel_archive");
+        assertThat(resolvedProperty("spring.datasource.driver-class-name", Map.of(),
+            "src/main/resources/application.yml",
+            "src/main/resources/application-dev.yml"))
+            .isEqualTo("com.mysql.cj.jdbc.Driver");
+        assertThat(resolvedProperty("spring.flyway.locations", Map.of(),
+            "src/main/resources/application.yml",
+            "src/main/resources/application-dev.yml"))
+            .isEqualTo("classpath:db/migration");
+        assertThat(resolvedProperty("personnel-archive.bootstrap-admin.password", Map.of(),
+            "src/main/resources/application.yml",
+            "src/main/resources/application-dev.yml"))
+            .isEmpty();
+    }
+
+    @Test
+    void usesKingbaseForProduction() throws IOException {
         assertThat(resolvedProperty("spring.datasource.url", Map.of(),
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
@@ -56,6 +88,11 @@ class ProductionProfileConfigurationTest {
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
             .isEqualTo("classpath:db/kingbase");
+    }
+
+    @Test
+    void doesNotUseAnExternalConfigDirectory() {
+        assertThat(Files.exists(Path.of("config"))).isFalse();
     }
 
     @Test
@@ -97,6 +134,21 @@ class ProductionProfileConfigurationTest {
         Map<String, String> overrides,
         String... configPaths
     ) throws IOException {
+        return environment(overrides, configPaths).getRequiredProperty(property);
+    }
+
+    private static Optional<String> optionalProperty(
+        String property,
+        Map<String, String> overrides,
+        String... configPaths
+    ) throws IOException {
+        return Optional.ofNullable(environment(overrides, configPaths).getProperty(property));
+    }
+
+    private static MockEnvironment environment(
+        Map<String, String> overrides,
+        String... configPaths
+    ) throws IOException {
         MockEnvironment environment = new MockEnvironment();
         overrides.forEach(environment::setProperty);
         YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
@@ -112,6 +164,6 @@ class ProductionProfileConfigurationTest {
                 environment.getPropertySources().addFirst(source);
             }
         }
-        return environment.getRequiredProperty(property);
+        return environment;
     }
 }
