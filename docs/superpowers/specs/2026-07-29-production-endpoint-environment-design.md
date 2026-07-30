@@ -40,7 +40,7 @@ The existing Vite configuration continues to validate that `VITE_API_ORIGIN` mat
 
 ## Data flow
 
-1. Spring resolves the default HTTP port as `18080` in the base, local, and production configurations, unless `PA_SERVER_PORT` explicitly overrides an environment-backed configuration.
+1. Spring resolves the default HTTP port as `18080` from common configuration for both `dev` and `prod`, unless `PA_SERVER_PORT` explicitly overrides it.
 2. The local launcher and development client use `127.0.0.1:18080`.
 3. The Windows client is built with Vite mode `prod`.
 4. Vite reads `.env.prod`, embeds the versioned API base URL, and injects the matching production origin into the renderer Content Security Policy.
@@ -56,7 +56,7 @@ The existing Vite configuration continues to validate that `VITE_API_ORIGIN` mat
 
 - Add frontend regression coverage for the local `18080` endpoint and explicit production build contract.
 - Build the renderer in `prod` mode and verify the emitted CSP and request base point to `10.141.29.96:18080` rather than `127.0.0.1`.
-- Update the backend configuration test so base, local, and `prod` configurations all resolve port `18080`, while `PA_SERVER_PORT` still overrides environment-backed values.
+- Update the backend configuration test so common, `dev`, and `prod` configurations all resolve port `18080`, while `PA_SERVER_PORT` still overrides the shared value.
 - Run the frontend lint, type check, unit tests, and production build.
 - Run the backend configuration and all non-database tests plus JAR packaging. Do not pull Testcontainers images or point automated tests at the user's existing `local-mysql` database.
 

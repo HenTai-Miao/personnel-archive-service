@@ -1,8 +1,10 @@
 # MySQL 与 KingbaseES 双数据库适配实施计划
 
+> Historical scope note: profile layout later became common `application.yml`, MySQL `application-dev.yml`, and Kingbase `application-prod.yml`; the external `config/` directory was removed. Both migration paths now also contain V8 default-admin seeds.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task in the current session. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 保持默认及 `local` 环境使用现有 MySQL，同时让 `prod` 使用 KingbaseES V9、自动建立等价 V7 结构，并让共享 MyBatis SQL 在两种数据库上保持一致语义。
+**Goal:** 保持 `dev` 环境使用现有 MySQL，同时让 `prod` 使用 KingbaseES V9、自动建立等价 V7 结构，并让共享 MyBatis SQL 在两种数据库上保持一致语义。
 
 **Architecture:** 应用继续使用现有 MyBatis Mapper。数据库差异被限制在 profile 数据源配置、分离的 Flyway 迁移位置和极少量共享 SQL 可移植化修改中；业务服务、事务边界、API 与前端协议不变。KingbaseES 应用连接使用官方 `kingbase8:9.0.1` 驱动，Flyway 按 KingbaseES 官方方式通过 PostgreSQL 协议执行 Kingbase 专用 V7 基线。
 
@@ -11,7 +13,7 @@
 ## Global Constraints
 
 - 不迁移到 MyBatis-Plus。
-- `local` 与默认开发环境继续使用 MySQL；不得修改、创建、重置或删除用户现有 `local-mysql` 数据卷。
+- `dev` 开发环境继续使用 MySQL；不得修改、创建、重置或删除用户现有 `local-mysql` 数据卷。
 - `prod` 默认应用 URL 为 `jdbc:kingbase8://10.141.29.96:54321/personnel_archive`，HTTP 端口仍为 `18080`。
 - 仓库不得保存生产数据库密码、令牌 pepper、HMAC key、AES key 或管理员密码。
 - 本次只为新 KingbaseES 空库创建最终 V7 结构，不迁移现有 MySQL 数据。
@@ -40,10 +42,10 @@
 
 ```java
 @Test
-void usesKingbaseForProductionAndKeepsMysqlForLocal() throws IOException {
+void usesKingbaseForProductionAndKeepsMysqlForDev() throws IOException {
     assertThat(resolvedProperty("spring.datasource.url",
         "src/main/resources/application.yml",
-        "config/application-local.yml"))
+        "src/main/resources/application-dev.yml"))
         .startsWith("jdbc:mysql://127.0.0.1:3306/personnel_archive");
     assertThat(resolvedProperty("spring.datasource.url",
         "src/main/resources/application.yml",
@@ -446,7 +448,7 @@ git commit -m "feat(service): add Kingbase V7 schema baseline"
 ### Task 4: 同步部署说明与项目知识库
 
 **Files:**
-- Create: `config/application-prod.env.example`
+- Modify: `src/main/resources/application-prod.yml`
 - Modify: `README.md`
 - Modify: `AGENTS.md`
 - Modify: `../AGENTS.md`
@@ -454,35 +456,18 @@ git commit -m "feat(service): add Kingbase V7 schema baseline"
 
 **Interfaces:**
 - Consumes: 已实现的 profile、双迁移路径和部署前置条件。
-- Produces: 无秘密的生产环境变量清单，以及与实际代码一致的跨项目/服务说明。
+- Produces: 只从环境变量取生产秘密的 classpath 配置，以及与实际代码一致的跨项目/服务说明。
 
-- [ ] **Step 1: 添加生产环境变量示例**
+- [ ] **Step 1: 收口生产 classpath 配置**
 
-创建：
-
-```dotenv
-SPRING_PROFILES_ACTIVE=prod
-PA_SERVER_PORT=18080
-PA_DB_URL=jdbc:kingbase8://10.141.29.96:54321/personnel_archive
-PA_FLYWAY_DB_URL=jdbc:postgresql://10.141.29.96:54321/personnel_archive
-PA_DB_USERNAME=personnel_archive
-PA_DB_PASSWORD=
-PA_TOKEN_PEPPER=
-PA_IDENTITY_HMAC_KEY=
-PA_IDENTITY_ENCRYPTION_KEY=
-PA_BOOTSTRAP_ADMIN_USERNAME=
-PA_BOOTSTRAP_ADMIN_PASSWORD=
-PA_BOOTSTRAP_ADMIN_DISPLAY_NAME=初始管理员
-```
-
-空值表示部署时必须通过安全注入提供，不是可用默认秘密。
+`src/main/resources/application-prod.yml` 以 `spring.config.activate.on-profile=prod` 激活，保留 `PA_DB_URL`、`PA_FLYWAY_DB_URL`、`PA_DB_USERNAME` 和 `PA_DB_PASSWORD` 环境变量映射。三项安全密钥继续由公共配置读取部署环境；不创建外置配置目录，不保存默认管理员明文。
 
 - [ ] **Step 2: 更新 README 与知识库**
 
 明确记录：
 
 - MySQL 与 KingbaseES 都是支持的持久化实现；
-- 默认/`local` 用 MySQL，`prod` 用 KingbaseES；
+- `dev` 用 MySQL，`prod` 用 KingbaseES；
 - KingbaseES 数据库和低权限应用账号由 DBA 预创建；
 - Flyway 建表但不创建数据库本身，也不搬迁 MySQL 数据；
 - Kingbase 应用/Flyway 两条 JDBC URL 的原因；
@@ -497,9 +482,9 @@ Run:
 
 ```bash
 rg -n 'MySQL 是唯一|唯一持久化|PA_DB_PASSWORD=.+|password:.+' \
-  README.md AGENTS.md config/application-prod.env.example
+  README.md AGENTS.md src/main/resources/application-prod.yml
 git diff --check
-git add README.md AGENTS.md config/application-prod.env.example
+git add README.md AGENTS.md src/main/resources/application-prod.yml
 git commit -m "docs(service): document dual database deployment"
 ```
 
@@ -570,4 +555,4 @@ Expected: 第一、二个搜索无匹配；Git 工作区无未提交服务文件
 
 - [ ] **Step 5: 记录生产验收边界**
 
-交付说明必须明确：没有 KingbaseES 实例，因此未执行数据库连接、Flyway 实际落库和 Kingbase 业务端到端测试。部署人员应在生产空库依次验证 Flyway V7、管理员引导、登录、单个导入、重复覆盖、家庭查询、软删除、单个 XLSX 导出和批量 ZIP 导出。
+交付说明必须明确：没有 KingbaseES 实例，因此未执行数据库连接、Flyway 实际落库和 Kingbase 业务端到端测试。部署人员应在生产空库依次验证 Flyway V7 基线、V8 默认管理员种子、默认管理员登录、单个导入、重复覆盖、家庭查询、软删除、单个 XLSX 导出和批量 ZIP 导出。

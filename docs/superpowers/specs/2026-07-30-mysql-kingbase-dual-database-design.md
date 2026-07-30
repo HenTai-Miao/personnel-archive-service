@@ -47,9 +47,9 @@ jdbc:postgresql://10.141.29.96:54321/personnel_archive
 
 ## Profile 边界
 
-`application.yml` 保持 MySQL 默认数据源，并继续扫描现有 `classpath:db/migration`。`config/application-local.yml` 不变，仍指向 `127.0.0.1:3306` 的现有 MySQL。
+当前配置在后续收口为三个 classpath 文件：`application.yml` 只保存公共配置并默认激活 `dev`，`application-dev.yml` 指向 `127.0.0.1:3306` 的现有 MySQL 并扫描 `classpath:db/migration`。
 
-`application-prod.yml` 覆盖以下内容：
+`application-prod.yml` 在 `prod` profile 提供以下内容：
 
 - 应用数据源 URL、驱动类、用户名和密码；
 - Flyway 独立 URL、用户名、密码和 KingbaseES 迁移位置；
@@ -59,7 +59,7 @@ jdbc:postgresql://10.141.29.96:54321/personnel_archive
 
 ## KingbaseES 结构基线
 
-KingbaseES 是新的生产空库，因此不逐步重演只服务于既有 MySQL 数据升级的 V1 至 V6。新增 `db/kingbase/V7__kingbase_initial_schema.sql`，一次创建与 MySQL 执行完 V1 至 V7 后等价的最终结构。Flyway 历史版本直接落在 V7，未来 V8 及后续结构变化必须在两个迁移位置各提供同版本脚本。
+KingbaseES 是新的生产空库，因此不逐步重演只服务于既有 MySQL 数据升级的 V1 至 V6。新增 `db/kingbase/V7__kingbase_initial_schema.sql`，一次创建与 MySQL 执行完 V1 至 V7 后等价的最终结构。Flyway 历史版本直接落在 V7；当前两条路径均已有 V8 默认管理员种子，未来 V9 及后续结构变化必须在两个迁移位置各提供同版本脚本。
 
 KingbaseES V7 基线遵循这些映射：
 
@@ -108,7 +108,7 @@ KingbaseES 不依赖 MySQL 的 `ON UPDATE CURRENT_TIMESTAMP`。所有确实会�
 - 执行 Maven 编译和打包；
 - 静态检查 KingbaseES V7 基线覆盖最终数据模型、索引和约束。
 
-由于没有可连接的 KingbaseES 实例，本次不能声称生产数据库迁移或端到端业务流已经实际通过。部署后必须由具备 KingbaseES 环境的人员执行一次空库启动、Flyway V7 落库、登录、导入、查询、覆盖、删除和导出验收。
+由于没有可连接的 KingbaseES 实例，本次不能声称生产数据库迁移或端到端业务流已经实际通过。部署后必须由具备 KingbaseES 环境的人员执行一次空库启动、Flyway V7 基线与 V8 种子落库、默认管理员登录、导入、查询、覆盖、删除和导出验收。
 
 ## 文档同步
 
@@ -118,4 +118,3 @@ KingbaseES 不依赖 MySQL 的 `ON UPDATE CURRENT_TIMESTAMP`。所有确实会�
 - 根目录 `AGENTS.md`、`CODE_GUIDE.md`；
 - 生产环境变量说明；
 - 当前实现状态中关于“唯一 MySQL 持久化”的旧描述。
-

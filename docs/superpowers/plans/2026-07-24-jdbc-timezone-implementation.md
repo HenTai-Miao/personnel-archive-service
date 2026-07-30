@@ -1,12 +1,12 @@
 # JDBC Timezone Fix Implementation Plan
 
-> Historical scope note: business-date `DATE`/`LocalDate` statements were superseded by the 2026-07-29 source-value fidelity work and Flyway V7. The `DATETIME(6)` timestamp mapping rules in this plan remain current.
+> Historical scope note: business-date `DATE`/`LocalDate` statements were superseded by the 2026-07-29 source-value fidelity work and Flyway V7. The `DATETIME(6)` timestamp mapping rules remain current; the MySQL URL later moved into `src/main/resources/application-dev.yml`, while common `application.yml` no longer contains a datasource.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Correct the eight-hour archive timestamp offset by interpreting existing MySQL `DATETIME(6)` values as `Asia/Shanghai` wall-clock time.
 
-**Architecture:** Keep the database values and UTC API serialization unchanged. Load the production JDBC URL options in a real-MySQL regression test, prove the current UTC option maps a fixed China wall-clock value to the wrong `Instant`, then replace the legacy option with Connector/J 9.7's `connectionTimeZone=Asia/Shanghai` in both default and local profiles.
+**Architecture:** Keep the database values and UTC API serialization unchanged. Load the development JDBC URL options in a real-MySQL regression test, prove the current UTC option maps a fixed China wall-clock value to the wrong `Instant`, then replace the legacy option with Connector/J 9.7's `connectionTimeZone=Asia/Shanghai` in the MySQL `dev` profile.
 
 **Tech Stack:** Java 21, Spring Boot 4.0.7, MySQL Connector/J 9.7.0, JUnit 5, Spring JDBC, Testcontainers MySQL 8.4.3, Maven Wrapper.
 
@@ -18,7 +18,7 @@
 - Business `DATE` / `LocalDate` fields are outside this change.
 - Use `connectionTimeZone=Asia/Shanghai`; do not add `forceConnectionTimeZoneToSession=true`.
 - Testcontainers must run against Docker; a skipped MySQL test is not completion evidence.
-- Preserve all existing local credentials and change only the JDBC URL in `config/application-local.yml`.
+- Preserve all existing local credentials and change only the JDBC URL in `src/main/resources/application-dev.yml`.
 
 ---
 
@@ -26,12 +26,11 @@
 
 **Files:**
 - Create: `src/test/java/com/company/personnelarchive/configuration/MySqlTimestampMappingIntegrationTest.java`
-- Modify: `src/main/resources/application.yml:5`
-- Modify: `config/application-local.yml:6`
+- Modify: `src/main/resources/application-dev.yml:7`
 
 **Interfaces:**
-- Consumes: `spring.datasource.url` from each service profile and Testcontainers' temporary JDBC authority/database.
-- Produces: Both service profiles use `connectionTimeZone=Asia/Shanghai`; a real-MySQL test proves `2026-07-24 11:06:01.887644` maps to `2026-07-24T03:06:01.887644Z`.
+- Consumes: `spring.datasource.url` from the `dev` profile and Testcontainers' temporary JDBC authority/database.
+- Produces: The MySQL `dev` profile uses `connectionTimeZone=Asia/Shanghai`; a real-MySQL test proves `2026-07-24 11:06:01.887644` maps to `2026-07-24T03:06:01.887644Z`.
 
 - [ ] **Step 1: Write the failing real-MySQL regression test**
 
@@ -67,10 +66,7 @@ class MySqlTimestampMappingIntegrationTest {
         .withPassword("test_password");
 
     @ParameterizedTest(name = "{0} maps China wall-clock DATETIME to the correct instant")
-    @ValueSource(strings = {
-        "src/main/resources/application.yml",
-        "config/application-local.yml"
-    })
+    @ValueSource(strings = "src/main/resources/application-dev.yml")
     void mapsChinaWallClockDatetimeToCorrectInstant(String configPath) throws IOException {
         // Given
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
@@ -122,13 +118,7 @@ Expected: both parameterized cases fail because the actual value is `2026-07-24T
 
 - [ ] **Step 3: Make the minimum configuration change**
 
-In `src/main/resources/application.yml`, replace only the legacy timezone option in the default URL:
-
-```yaml
-url: ${PA_DB_URL:jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai}
-```
-
-In `config/application-local.yml`, preserve every existing value and replace only `serverTimezone=UTC`:
+In `src/main/resources/application-dev.yml`, preserve every existing value and replace only `serverTimezone=UTC`:
 
 ```yaml
 url: "jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true"
@@ -148,7 +138,7 @@ Expected: `Tests run: 2, Failures: 0, Errors: 0, Skipped: 0` and `BUILD SUCCESS`
 
 ```bash
 git add src/test/java/com/company/personnelarchive/configuration/MySqlTimestampMappingIntegrationTest.java \
-  src/main/resources/application.yml config/application-local.yml
+  src/main/resources/application-dev.yml
 git commit -m "fix: align JDBC timestamps with China time"
 ```
 
@@ -253,12 +243,12 @@ rg -n '<testsuite.*tests="2".*errors="0".*skipped="0".*failures="0"' \
 
 Expected: one matching `<testsuite ...>` line.
 
-- [ ] **Step 3: Restart the service with the local profile**
+- [ ] **Step 3: Restart the service with the dev profile**
 
 Stop the existing Spring Boot process cleanly, then run:
 
 ```bash
-./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
 Expected: Flyway reports the schema up to date and the API listens on port `18080` without a datasource timezone error.

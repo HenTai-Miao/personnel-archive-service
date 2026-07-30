@@ -212,7 +212,7 @@
 
 - [ ] **Step 3: Commit the implementation**
 
-  Stage source, tests, migration, and synchronized docs only. Do not stage `config/application-local.yml`.
+  Stage source, tests, migration, and synchronized docs only. Do not stage unrelated development configuration.
 
   Commit message: `feat: import label-anchored workbook variants`
 
@@ -222,12 +222,12 @@
 - No source files; use the five user-provided Desktop paths only at runtime.
 
 **Interfaces:**
-- Consumes: local MySQL, local profile service, authenticated `/api/v1/imports`, and the B desktop client.
+- Consumes: local MySQL, `dev` profile service, authenticated `/api/v1/imports`, and the B desktop client.
 - Produces: five persistent import-history items plus visible active archive details.
 
 - [ ] **Step 1: Start local MySQL/service and B client**
 
-  Start the service with Java 21 and the existing uncommitted local profile. Start `personnel-archive-desktop-b` with `pnpm dev`; do not use the root launcher because it opens the sibling packaged client.
+  Start the service with Java 21 and the `dev` profile. Start `personnel-archive-desktop-b` with `pnpm dev`; do not use the root launcher because it opens the sibling packaged client.
 
 - [ ] **Step 2: Upload all five files in one batch**
 

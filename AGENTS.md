@@ -9,7 +9,7 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 - Import decisions use a bounded in-memory parsed-document store, so a service restart intentionally makes an outstanding decision stale and requires re-upload.
 - Literal family ages are copied exactly. The template's exact `DATEDIF(家庭成员年龄计算!D<n>,TODAY(),"y")` formula is evaluated once at import so stale XLSX caches cannot differ from Excel's displayed value; the string is then frozen for persistence, query, display, and export.
 - Desktop folder scanning and source-file moves are intentionally client-side and are implemented by the current client; the service remains authoritative for import success and exposes no local-path API.
-- The shared, explicit local, and `prod` configurations all default the HTTP service port to `18080`; `PA_SERVER_PORT` remains the deployment override. Default/local profiles use MySQL, while `prod` uses the official Kingbase application driver plus a PostgreSQL-protocol Flyway connection to the same KingbaseES database.
+- `application.yml` contains shared settings and defaults to `dev`; `application-dev.yml` uses the existing MySQL service, while `application-prod.yml` uses the official Kingbase application driver plus a PostgreSQL-protocol Flyway connection to the same KingbaseES database. Both environments default to HTTP port `18080`, and `PA_SERVER_PORT` remains the deployment override. No external `config/` directory is used.
 - Update this section in the same change whenever an endpoint, migration, persistence rule, or supported workflow changes.
 
 ## STACK AND SHAPE
@@ -22,7 +22,7 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 
 ## DATABASE RULES
 
-- Database name: `personnel_archive`. Default/local development uses the pinned MySQL LTS image; `prod` uses KingbaseES V9 on the configured server.
+- Database name: `personnel_archive`. The `dev` profile uses the pinned MySQL LTS image; `prod` uses KingbaseES V9 on the configured server.
 - Flyway is the only schema-change mechanism. MySQL uses `classpath:db/migration`; a new KingbaseES production database uses the V7 final baseline plus V8 default-admin seed in `classpath:db/kingbase`. V8 creates the fixed enabled `hr_6298bc833379` user with display name “人资部门”, a BCrypt cost 12 hash, and its sole `ADMIN` association; a same-named migration target is deterministically reset and unlocked. Disable production auto-DDL, never rewrite an applied migration, never place the default administrator's plaintext password in the repository or logs, and never imply that the Kingbase baseline transfers MySQL data.
 - Use `BIGINT`, `snake_case`, explicit foreign keys/indexes, MySQL `utf8mb4`, and the equivalent KingbaseES Unicode text types.
 - Include server-controlled `tenant_id`; version 1 always resolves it to `1` and ignores/rejects client input.
@@ -85,7 +85,7 @@ Establish Maven Wrapper commands; the minimum completion command is:
 
 Real-MySQL Testcontainers suites use `disabledWithoutDocker = true`: they run whenever Docker is reachable and are reported as skipped otherwise. A sandbox skip is not evidence that a migration or end-to-end database flow passed; release verification must run them with Docker available.
 
-For macOS manual testing, the root `../启动本地测试.command` uses an already available MySQL service or safely starts the existing `local-mysql` container, runs this service with the `local` profile, waits for `/api/v1`, and opens the canonical `personnel-archive-desktop-b` client. It must never create, reset, or delete the user's database volume.
+For macOS manual testing, the root `../启动本地测试.command` uses an already available MySQL service or safely starts the existing `local-mysql` container, runs this service with the `dev` profile, waits for `/api/v1`, and opens the canonical `personnel-archive-desktop-b` client. It must never create, reset, or delete the user's database volume.
 
 Cover exact-label layout resolution, historical row shifts, optional/partially filled fields, evidence-based family birth-date association, exact source date/age preservation, duplicate precheck, default skip, overwrite history, reasoned soft deletion, persistent import-history pagination, repeated overwrites/deletes, active-only uniqueness/querying, stale/concurrent decisions, rollback, fuzzy search, authorization, identity/phone masking and explicit reveal, audit redaction, dynamic-family lossless export, and photo insertion. `DefaultAdminMigrationContractTest` must keep MySQL and KingbaseES V8 seed SQL aligned, including deterministic reset/unlock and the sole `ADMIN` association, without exposing plaintext credentials. Every schema change updates the affected MySQL migration path, the Kingbase final baseline/seed, static dual-database contracts, and a real MySQL integration test. Kingbase runtime claims additionally require a real KingbaseES deployment test; every API change updates OpenAPI and client types.
 

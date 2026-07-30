@@ -1,6 +1,6 @@
 # Production Endpoint Environment Implementation Plan
 
-> **Superseded port assumption:** This plan records the first production-only port change. The later `2026-07-29-unified-backend-port-implementation.md` is authoritative and moves base, local, and production traffic to `18080`.
+> **Superseded port assumption:** This plan records the first production-only port change. The later profile split makes common configuration authoritative for port `18080`, inherited by both `dev` and `prod`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

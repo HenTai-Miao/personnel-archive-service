@@ -1,5 +1,7 @@
 # 双数据库默认管理员 V8 实施计划
 
+> Historical scope note: service profiles later became common `application.yml`, MySQL `application-dev.yml`, and Kingbase `application-prod.yml`; the external `config/` directory was removed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 通过 MySQL 与 KingbaseES 两套 Flyway V8 确定性地创建或重置指定管理员账号，并赋予唯一 `ADMIN` 角色关联，同时保证仓库不保存明文密码。
@@ -15,9 +17,9 @@
 - 两套 V8 只保存已离线验证 `matches=true` 的 BCrypt cost 12 哈希 `$2a$12$ZeUKR0IcwyMU1Wye4d6T9Oc/NG3ZRF3a69JSHnnXiPrHuLqxI/nBi`；任何新 SQL、测试、文档、日志和提交信息都不得出现明文密码。
 - 同名账号存在时必须重置显示名称、密码哈希、启用状态、失败次数和锁定状态，并更新 `password_changed_at`/`updated_at`。
 - 用户与角色外键通过 `tenant_code='DEFAULT'`、`role_code='ADMIN'` 查询，不硬编码用户或角色 ID。
-- 默认/`local` 仍使用 MySQL，`prod` 仍使用 KingbaseES；不得连接本地或生产 KingbaseES。
+- `dev` 使用 MySQL，`prod` 使用 KingbaseES；不得连接本地或生产 KingbaseES。
 - 不得把自动化测试指向用户的 `local-mysql`。MySQL Testcontainers 只在本机已有 `mysql:8.4.3` 镜像时运行，不允许为了本任务拉取镜像。
-- 保留当前工作区已有的 `config/application-prod.env.example -> config/application-prod.yml` 暂存重命名、README 路径修改和旧计划修改，不重置、不覆盖；提交时明确检查并只纳入本任务需要的内容。
+- 保留当前工作区已有的 README 和旧计划修改，不重置、不覆盖；提交时明确检查并只纳入本任务需要的内容。
 
 ---
 
@@ -307,12 +309,12 @@ git commit --only \
 **Files:**
 - Modify: `README.md`
 - Modify: `AGENTS.md`
-- Modify: `config/application-prod.yml`
+- Modify: `src/main/resources/application-prod.yml`
 - Modify: `../AGENTS.md`
 - Modify: `../CODE_GUIDE.md`
 
 **Interfaces:**
-- Consumes: Task 1/2 已实现的 V8 默认管理员及当前工作区预存的生产配置示例重命名。
+- Consumes: Task 1/2 已实现的 V8 默认管理员及 classpath 生产配置。
 - Produces: 与实际 Flyway V8 一致的默认数据、安全边界和部署说明。
 
 - [ ] **Step 1: 更新服务 README**
@@ -323,19 +325,11 @@ git commit --only \
 Flyway V8 会为默认租户创建一个启用的 `ADMIN` 登录：账号 `hr_6298bc833379`、显示名称“人资部门”。密码只以 BCrypt cost 12 哈希存在于迁移中，明文由部署负责人单独保管。
 ```
 
-把“Flyway 只建立 V7 最终结构和初始角色”改为“Flyway 建立 V8 最终结构、初始角色和默认管理员”，删除“生产首次启动必须提供管理员引导变量”的要求。保留当前 `config/application-prod.yml` 路径修改。
+把“Flyway 只建立 V7 最终结构和初始角色”改为“Flyway 建立 V8 最终结构、初始角色和默认管理员”，删除“生产首次启动必须提供管理员引导变量”的要求。
 
-- [ ] **Step 2: 收敛生产变量示例**
+- [ ] **Step 2: 收敛生产 classpath 配置**
 
-在已重命名的 `config/application-prod.yml` 中保留数据库和三项安全密钥变量，删除以下已经不再是标准首次启动必需项的三行：
-
-```dotenv
-PA_BOOTSTRAP_ADMIN_USERNAME=
-PA_BOOTSTRAP_ADMIN_PASSWORD=
-PA_BOOTSTRAP_ADMIN_DISPLAY_NAME=初始管理员
-```
-
-不改变该文件中其余值，不加入默认管理员明文密码。
+`src/main/resources/application-prod.yml` 只保留数据库环境变量映射和 Kingbase/Flyway 路径；三项安全密钥由公共配置读取部署环境。不创建外置示例文件，不加入默认管理员明文密码。
 
 - [ ] **Step 3: 更新服务与根知识库**
 
@@ -356,7 +350,7 @@ Run:
 
 ```bash
 rg -n "V7|V8|hr_6298bc833379|默认管理员|bootstrap|application-prod" \
-  README.md AGENTS.md config/application-prod.yml ../AGENTS.md ../CODE_GUIDE.md
+  README.md AGENTS.md src/main/resources/application-prod.yml ../AGENTS.md ../CODE_GUIDE.md
 git diff --check
 git status --short
 ```
@@ -365,14 +359,14 @@ Expected: 文档不再把 V7 或 `PA_BOOTSTRAP_ADMIN_*` 描述为生产最终状
 
 - [ ] **Step 5: 提交服务仓库文档**
 
-服务仓库提交只包含 README、服务 AGENTS 和生产变量示例的最终内容；根目录文档因父目录不是 Git 仓库单独保留：
+服务仓库提交只包含 README、服务 AGENTS 和生产配置的最终内容；根目录文档因父目录不是 Git 仓库单独保留：
 
 ```bash
-git add README.md AGENTS.md config/application-prod.yml
+git add README.md AGENTS.md src/main/resources/application-prod.yml
 git commit -m "docs(service): document seeded administrator"
 ```
 
-提交前用 `git diff --cached --stat` 明确披露并确认当前已暂存的生产配置重命名会随本次文档提交纳入；不得纳入用户修改的旧实施计划。
+提交前用 `git diff --cached --stat` 明确披露实际文件边界；不得纳入其他用户修改。
 
 ---
 

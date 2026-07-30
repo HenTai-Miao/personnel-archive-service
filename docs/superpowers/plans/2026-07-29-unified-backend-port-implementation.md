@@ -1,16 +1,18 @@
 # Unified Backend Port Implementation Plan
 
+> Historical scope note: the backend was later split into common `application.yml`, MySQL `application-dev.yml`, and Kingbase `application-prod.yml`. Port `18080` now lives only in common configuration and is inherited by both profiles.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make every backend environment listen on port `18080` and make every active frontend/local-launcher request target that same port.
 
-**Architecture:** The backend base, local, and production configurations share one port while retaining `PA_SERVER_PORT` where environment override is supported. The desktop keeps different local and production hosts, but both API URLs use port `18080`; the root launcher and E2E interceptors follow the same contract.
+**Architecture:** The backend common configuration supplies one port to `dev` and `prod` while retaining `PA_SERVER_PORT`. The desktop keeps different local and production hosts, but both API URLs use port `18080`; the root launcher and E2E interceptors follow the same contract.
 
 **Tech Stack:** Java 21, Spring Boot YAML configuration, JUnit 5, Electron, Vite/electron-vite, TypeScript, Vitest, Playwright, zsh.
 
 ## Global Constraints
 
-- Backend base, local, and production defaults are all `18080`.
+- Backend common, `dev`, and `prod` effective defaults are all `18080`.
 - Local frontend API base is `http://127.0.0.1:18080/api/v1`.
 - Production frontend API base is `http://10.141.29.96:18080/api/v1`.
 - `PA_SERVER_PORT` remains the deployment override where used.
@@ -25,11 +27,11 @@
 **Files:**
 - Modify: `src/test/java/com/company/personnelarchive/configuration/ProductionProfileConfigurationTest.java`
 - Modify: `src/main/resources/application.yml`
-- Modify: `config/application-local.yml`
+- Verify: `src/main/resources/application-dev.yml`
 - Modify: `AGENTS.md`
 
 **Interfaces:**
-- Consumes: base configuration, explicit local configuration, `prod` profile, and optional `PA_SERVER_PORT`.
+- Consumes: common configuration, `dev`/`prod` profiles, and optional `PA_SERVER_PORT`.
 - Produces: `server.port=18080` for every default configuration and an environment override for environment-backed configurations.
 
 - [ ] **Step 1: Change the test to require port 18080 everywhere**
@@ -39,7 +41,9 @@
 void usesFiveDigitPortInEveryEnvironment() throws IOException {
     assertThat(resolvedServerPort(null, "src/main/resources/application.yml"))
         .isEqualTo("18080");
-    assertThat(resolvedServerPort(null, "config/application-local.yml"))
+    assertThat(resolvedServerPort(null,
+        "src/main/resources/application.yml",
+        "src/main/resources/application-dev.yml"))
         .isEqualTo("18080");
     assertThat(resolvedServerPort(null,
         "src/main/resources/application.yml",
@@ -67,16 +71,11 @@ server:
   port: ${PA_SERVER_PORT:18080}
 ```
 
-Set the explicit local value in `config/application-local.yml`:
-
-```yaml
-server:
-  port: 18080
-```
+`application-dev.yml` does not repeat `server.port`; it inherits the shared value above.
 
 - [ ] **Step 4: Update the backend status documentation**
 
-Replace the split-port status in `AGENTS.md` with one statement that base, local, and `prod` all default to `18080`, while `PA_SERVER_PORT` remains the deployment override.
+Replace the split-port status in `AGENTS.md` with one statement that common, `dev`, and `prod` all resolve to `18080`, while `PA_SERVER_PORT` remains the deployment override.
 
 - [ ] **Step 5: Run the focused test and verify GREEN**
 
@@ -87,7 +86,7 @@ Expected: 2 tests pass.
 - [ ] **Step 6: Commit the backend configuration**
 
 ```bash
-git add AGENTS.md config/application-local.yml src/main/resources/application.yml \
+git add AGENTS.md src/main/resources/application.yml \
   src/test/java/com/company/personnelarchive/configuration/ProductionProfileConfigurationTest.java
 git commit -m "fix(service): unify backend port on 18080"
 ```
