@@ -16,7 +16,17 @@
 - `src/main/resources/db/migration/V8__seed_default_admin.sql`
 - `src/main/resources/db/kingbase/V8__seed_default_admin.sql`
 
-默认/`local` profile 运行 MySQL V8，`prod` profile 在 KingbaseES V7 基线之后运行 KingbaseES V8。两套迁移都通过租户代码 `DEFAULT` 和角色代码 `ADMIN` 查询外键，不依赖角色或用户自增 ID。
+`dev` profile 运行 MySQL V8，`prod` profile 在 KingbaseES V7 基线之后运行 KingbaseES V8。两套迁移都通过租户代码 `DEFAULT` 和角色代码 `ADMIN` 查询外键，不依赖角色或用户自增 ID。
+
+## dev/prod 配置收口
+
+后端只保留 `dev` 和 `prod` 两个运行环境，不再使用 `local` profile 或工程根下的外置 `config/` 目录：
+
+- `src/main/resources/application.yml`：只保存两个环境共用的应用名、HTTP 端口、上传限制、Jackson、MyBatis、安全期限、Excel 模板和管理员引导占位；设置默认 profile 为 `dev`，不包含数据库 URL、账号或 Flyway 路径。
+- `src/main/resources/application-dev.yml`：激活条件为 `dev`，连接用户现有的本机 MySQL，使用 `classpath:db/migration`。现有本机联调值从 `config/application-local.yml` 原样迁入，确保不创建、不重置 Docker 数据卷。
+- `src/main/resources/application-prod.yml`：激活条件为 `prod`，应用使用 Kingbase JDBC，Flyway 使用指向同一 KingbaseES 数据库的 PostgreSQL JDBC，迁移位置为 `classpath:db/kingbase`；生产秘密继续只从环境变量注入。
+
+删除整个 `config/` 目录，不再保留生产变量示例文件。根 `启动本地测试.command` 改为检查 classpath 下的 `application-dev.yml` 并以 `dev` profile 启动；配置测试、README、`AGENTS.md` 和 `CODE_GUIDE.md` 中的 `local` 服务 profile 与旧路径引用同步改为 `dev`。前端 `.env.local` 仍表示 Vite 本机模式，不属于后端 Spring profile，本次不改名。
 
 ## 账号写入语义
 
@@ -48,10 +58,10 @@
 - 两者均不含用户指定的明文密码；
 - MySQL 使用 `ON DUPLICATE KEY UPDATE`，KingbaseES 使用 `ON CONFLICT`。
 
-扩展真实 MySQL Testcontainers 迁移测试，验证 Flyway 到 V8 后用户存在、启用、显示名称正确、哈希与 V8 契约一致，并且 `ADMIN` 角色关联唯一。该集成测试只使用隔离的 Testcontainers 数据库，不连接用户的 `local-mysql`。密码与哈希的对应关系由前述一次性离线验证确认，避免把明文固化进测试源码。
+扩展真实 MySQL Testcontainers 迁移测试，验证 Flyway 到 V8 后用户存在、启用、显示名称正确、哈希与 V8 契约一致，并且 `ADMIN` 角色关联唯一。该集成测试只使用隔离的 Testcontainers 数据库，不连接用户现有的 MySQL Docker。密码与哈希的对应关系由前述一次性离线验证确认，避免把明文固化进测试源码。
 
 根据既定限制，本次不连接 KingbaseES；Kingbase V8 只做静态契约、资源打包和 Flyway 位置检查。真实 KingbaseES 登录仍属于部署验收边界。
 
 ## 文档同步
 
-更新服务 `README.md`、服务 `AGENTS.md`、根 `AGENTS.md` 和 `CODE_GUIDE.md`：默认数据从“一个租户＋三个角色”调整为“一个租户＋三个角色＋一个固定 ADMIN 登录”，Flyway 当前版本调整为 V8，并明确仓库不保存明文密码。
+更新服务 `README.md`、服务 `AGENTS.md`、根 `AGENTS.md` 和 `CODE_GUIDE.md`：默认数据从“一个租户＋三个角色”调整为“一个租户＋三个角色＋一个固定 ADMIN 登录”，Flyway 当前版本调整为 V8，配置说明只保留 `dev`/`prod`，并明确仓库不保存默认管理员明文密码。
