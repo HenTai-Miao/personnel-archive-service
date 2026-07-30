@@ -5,34 +5,34 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 ## CURRENT SERVICE STATUS
 
 - Implemented APIs cover authentication/session lifecycle, manual batch import, duplicate decisions, persistent paginated import history, active archive list/complete detail with masked identity-card/phone values, ADMIN/ARCHIVE_EDITOR reasoned soft deletion, authenticated no-store single-field reveal and photo bytes, family-member search, single XLSX export, and selected batch ZIP export.
-- Implemented schema migrations are V1 initial schema, V2 photo-anchor preservation, V3 optional employee/name/identity support, V4 `delete_reason` expansion to `LONGTEXT`, V5 removal of the six-member family-order ceiling, V6 transitional source date/age text preservation, and V7 direct `VARCHAR(64)` storage for all twelve business-date columns; photos are stored as BLOBs with reconstruction metadata.
+- MySQL migrations are V1 initial schema, V2 photo-anchor preservation, V3 optional employee/name/identity support, V4 `delete_reason` expansion to `LONGTEXT`, V5 removal of the six-member family-order ceiling, V6 transitional source date/age text preservation, and V7 direct `VARCHAR(64)` storage for all twelve business-date columns. A separate KingbaseES `db/kingbase/V7__kingbase_initial_schema.sql` creates the same final model for a new production database; it does not migrate MySQL data.
 - Import decisions use a bounded in-memory parsed-document store, so a service restart intentionally makes an outstanding decision stale and requires re-upload.
 - Literal family ages are copied exactly. The template's exact `DATEDIF(家庭成员年龄计算!D<n>,TODAY(),"y")` formula is evaluated once at import so stale XLSX caches cannot differ from Excel's displayed value; the string is then frozen for persistence, query, display, and export.
 - Desktop folder scanning and source-file moves are intentionally client-side and are implemented by the current client; the service remains authoritative for import success and exposes no local-path API.
-- The shared, explicit local, and `prod` configurations all default the HTTP service port to `18080`; `PA_SERVER_PORT` remains the deployment override for environment-backed configurations.
+- The shared, explicit local, and `prod` configurations all default the HTTP service port to `18080`; `PA_SERVER_PORT` remains the deployment override. Default/local profiles use MySQL, while `prod` uses the official Kingbase application driver plus a PostgreSQL-protocol Flyway connection to the same KingbaseES database.
 - Update this section in the same change whenever an endpoint, migration, persistence rule, or supported workflow changes.
 
 ## STACK AND SHAPE
 
 - Java 21, Spring Boot 4.x/Spring MVC, Maven Wrapper.
-- Spring Security, Bean Validation, official MyBatis Spring Boot Starter, Flyway, MySQL Connector/J, Apache POI XSSF.
+- Spring Security, Bean Validation, official MyBatis Spring Boot Starter, Flyway, MySQL Connector/J, KingbaseES JDBC, PostgreSQL JDBC for Kingbase Flyway, Apache POI XSSF.
 - JUnit 5 and Testcontainers with real MySQL for integration tests; do not substitute H2.
 - Modular monolith organized by feature: `auth`, `person`, `family`, `archiveimport`, `archiveexport`, `audit`, and `configuration`.
 - Controllers handle HTTP/DTO boundaries only. Application services own transactions and workflows; mappers own SQL.
 
 ## DATABASE RULES
 
-- Database name: `personnel_archive`; production containers pin an explicit MySQL LTS patch version.
-- Flyway is the only schema-change mechanism. Disable production auto-DDL and never leave manual changes without a migration.
-- Use `BIGINT`, `snake_case`, `utf8mb4`, and explicit foreign keys/indexes.
+- Database name: `personnel_archive`. Default/local development uses the pinned MySQL LTS image; `prod` uses KingbaseES V9 on the configured server.
+- Flyway is the only schema-change mechanism. MySQL uses `classpath:db/migration`; a new KingbaseES production database uses the final V7 baseline in `classpath:db/kingbase`. Disable production auto-DDL, never rewrite an applied migration, and never imply that the Kingbase baseline transfers MySQL data.
+- Use `BIGINT`, `snake_case`, explicit foreign keys/indexes, MySQL `utf8mb4`, and the equivalent KingbaseES Unicode text types.
 - Include server-controlled `tenant_id`; version 1 always resolves it to `1` and ignores/rejects client input.
 - `pa_person` owns snapshot state: `is_deleted` defaults to `0`; also record `deleted_at`, `deleted_by`, `delete_reason`, and `replaced_by_person_id`. Old children remain unchanged under the old `person_id`.
-- Manual archive deletion accepts a trimmed, nonblank reason of at most 10,000 characters, stores it in the `LONGTEXT` `delete_reason`, and leaves `replaced_by_person_id`, child rows, photos, and import history unchanged.
-- Enforce supplied nonblank employee-number and identity-card uniqueness only for active snapshots. Nullable generated `active_employee_no`/`active_id_card_hmac` columns become `NULL` for blank/absent identifiers and deleted rows, then unique-index with `tenant_id`; never use `(value, is_deleted)` uniqueness.
+- Manual archive deletion accepts a trimmed, nonblank reason of at most 10,000 characters, stores it in the database's unbounded text type, and leaves `replaced_by_person_id`, child rows, photos, and import history unchanged.
+- Enforce supplied nonblank employee-number and identity-card uniqueness only for active snapshots. MySQL uses nullable generated active-key columns; KingbaseES uses equivalent partial unique indexes. Blank/absent identifiers and deleted rows do not participate; never use `(value, is_deleted)` uniqueness.
 - Encrypt full identity-card data with authenticated encryption; keep encryption/HMAC keys outside the database and repository.
-- Store photos as bounded binary BLOBs with MIME, byte count, dimensions, filename, and SHA-256.
+- Store photos as bounded binary BLOB/`BYTEA` values with MIME, byte count, dimensions, filename, and SHA-256.
 - Store each literal main-sheet family age exactly as supplied. Evaluate only the template's exact `DATEDIF(家庭成员年龄计算!D<n>,TODAY(),"y")` formula at import and freeze its Excel-equivalent display result as text; never calculate a stored age during query/export. Store every business date directly in its `VARCHAR(64)` column: a year stays a year, a year-month stays a year-month, and a year-month-day stays a year-month-day. Do not maintain a second normalized date column.
-- MySQL `DATETIME(6)` audit and snapshot timestamps use China wall-clock time. Every service JDBC URL must set `connectionTimeZone=Asia/Shanghai`; Java reads API timestamps as `Instant`, and Jackson serializes those instants in UTC. Do not compensate in a client.
+- MySQL `DATETIME(6)` audit and snapshot timestamps use China wall-clock time, and every MySQL JDBC URL must set `connectionTimeZone=Asia/Shanghai`. KingbaseES uses equivalent `TIMESTAMP(6)` columns and must run with its database/session and service JVM time zone set to `Asia/Shanghai`. Java exposes API timestamps as UTC `Instant`; do not compensate in a client.
 - Never point automated tests at the user's running `local-mysql` container.
 
 ## API AND AUTH
@@ -86,7 +86,7 @@ Real-MySQL Testcontainers suites use `disabledWithoutDocker = true`: they run wh
 
 For macOS manual testing, the root `../启动本地测试.command` uses an already available MySQL service or safely starts the existing `local-mysql` container, runs this service with the `local` profile, waits for `/api/v1`, and opens the canonical `personnel-archive-desktop-b` client. It must never create, reset, or delete the user's database volume.
 
-Cover exact-label layout resolution, historical row shifts, optional/partially filled fields, evidence-based family birth-date association, exact source date/age preservation, duplicate precheck, default skip, overwrite history, reasoned soft deletion, persistent import-history pagination, repeated overwrites/deletes, active-only uniqueness/querying, stale/concurrent decisions, rollback, fuzzy search, authorization, identity/phone masking and explicit reveal, audit redaction, dynamic-family lossless export, and photo insertion. Every schema change includes a Flyway migration and MySQL integration test; every API change updates OpenAPI and client types.
+Cover exact-label layout resolution, historical row shifts, optional/partially filled fields, evidence-based family birth-date association, exact source date/age preservation, duplicate precheck, default skip, overwrite history, reasoned soft deletion, persistent import-history pagination, repeated overwrites/deletes, active-only uniqueness/querying, stale/concurrent decisions, rollback, fuzzy search, authorization, identity/phone masking and explicit reveal, audit redaction, dynamic-family lossless export, and photo insertion. Every schema change updates the affected MySQL migration path, the Kingbase final baseline, static dual-database contracts, and a real MySQL integration test. Kingbase runtime claims additionally require a real KingbaseES deployment test; every API change updates OpenAPI and client types.
 
 ## CODE DOCUMENTATION
 
