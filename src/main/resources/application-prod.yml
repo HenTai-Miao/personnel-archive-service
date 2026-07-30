@@ -1,2 +1,14 @@
 server:
   port: ${PA_SERVER_PORT:18080}
+
+spring:
+  datasource:
+    url: ${PA_DB_URL:jdbc:kingbase8://10.141.29.96:54321/personnel_archive}
+    username: ${PA_DB_USERNAME:personnel_archive}
+    password: ${PA_DB_PASSWORD:}
+    driver-class-name: com.kingbase8.Driver
+  flyway:
+    url: ${PA_FLYWAY_DB_URL:jdbc:postgresql://10.141.29.96:54321/personnel_archive}
+    user: ${PA_DB_USERNAME:personnel_archive}
+    password: ${PA_DB_PASSWORD:}
+    locations: classpath:db/kingbase
