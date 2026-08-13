@@ -11,7 +11,7 @@ Inherits all product, data, Excel, and security rules from `../AGENTS.md`. This 
 - Desktop folder scanning and source-file moves are intentionally client-side and are implemented by the current client; the service remains authoritative for import success and exposes no local-path API.
 - `application.yml` contains shared settings and defaults to `dev`; `application-dev.yml` uses the existing local MySQL service, while `application-prod.yml` uses MySQL with environment-injected production credentials. Both profiles scan `classpath:db/migration`, default to HTTP port `18080`, and retain `PA_SERVER_PORT` as the deployment override. No external `config/` directory is used.
 - The `prod` profile writes `./log/personnel-archive-service.log` in addition to the console, rotates compressed history at 20 MB with 30 retained periods and a 1 GB total cap, and allows operations to override the file and archive pattern. A server-owned `X-Request-Id` correlates the response, diagnostic events, safe error response and database audit rows. Authentication, import/decision/history, list/detail/search, sensitive-field/photo access, deletion and XLSX/ZIP export emit start/success/failure/count/duration checkpoints without business values. File logs are diagnostic; `sys_operation_log` remains the authoritative audit source.
-- `deployment/uos` is the tested source for the offline Java 21/systemd production bundle. Its allowlisted builder verifies the executable JAR and emits a collision-safe directory, `.tar.gz`, inner manifest and outer SHA-256 without Maven, network access, credentials or personnel data. The target installer validates checksums, Java 21, systemd and free space; installs under `/opt/personnel-archive-service`; runs as the non-login `personnel-archive` account; keeps root-only environment secrets under `/etc/personnel-archive-service`; fixes the absolute log path beside the JAR; and performs a bounded service/port readiness check. First install prompts without echo and generates three keys locally; normal reinstall preserves secrets/logs, while `--reconfigure` changes only the database password and preserves all three keys.
+- `deployment/uos` is the tested source for the offline Java 21/systemd production bundle. Its allowlisted builder verifies the executable JAR, removes the embedded `application-dev.yml` from a temporary production copy, and emits a collision-safe directory, `.tar.gz`, inner manifest and outer SHA-256 without modifying the Maven artifact or including credentials/personnel data. The target installer validates checksums, Java 21, systemd and free space; installs under `/opt/personnel-archive-service`; runs as the non-login `personnel-archive` account; keeps root-only environment secrets under `/etc/personnel-archive-service`; fixes the absolute log path beside the JAR; and performs a bounded service/port readiness check. First install prompts without echo and generates three keys locally; normal reinstall preserves secrets/logs, while `--reconfigure` changes only the database password and preserves all three keys.
 - Update this section in the same change whenever an endpoint, migration, persistence rule, or supported workflow changes.
 
 ## STACK AND SHAPE
@@ -98,9 +98,10 @@ bundle only from a freshly verified executable JAR:
 ./deployment/uos/build-bundle.sh target/personnel-archive-service-0.1.0-SNAPSHOT.jar <output-directory>
 ```
 
-The builder must copy an explicit allowlist, must not invoke Maven, and must never include any
-environment secret file, development profile, local attachment, workbook upload, photo or database
-dump. The target installer must not use package managers or network download tools. Never log,
+The builder must copy an explicit allowlist, must not invoke Maven, must remove the embedded
+development profile from only its temporary JAR copy, and must never include any environment secret
+file, local attachment, workbook upload, photo or database dump. The target installer must not use
+package managers or network download tools. Never log,
 print, source, evaluate or place a database password or generated key in command arguments;
 `--reconfigure` may replace only the database password and must preserve all three existing keys.
 

@@ -15,6 +15,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import java.util.regex.Pattern;
+import java.util.zip.ZipFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -191,8 +192,9 @@ class UosDeploymentContractTest {
         String text = Files.readString(BUILDER, StandardCharsets.UTF_8);
         assertThat(text)
             .contains("mktemp -d", "STAGING_PREFIX", "personnel-archive-service.jar", "SHA256SUMS",
-                "BUILD-INFO.txt", ".tar.gz.sha256", "tar -tzf", "for suffix in")
-            .doesNotContain("cp -R deployment", "cp -a deployment", ".env", "application-dev.yml",
+                "BUILD-INFO.txt", ".tar.gz.sha256", "tar -tzf", "for suffix in", "zip -d",
+                "BOOT-INF/classes/application-dev.yml")
+            .doesNotContain("cp -R deployment", "cp -a deployment", ".env",
                 "新建 文本文档 (2).txt", "mvn ", "./mvnw", "git clean", "git reset", "git checkout");
     }
 
@@ -223,6 +225,10 @@ class UosDeploymentContractTest {
         assertThat(directory.resolve("BUILD-INFO.txt")).isRegularFile();
         assertThat(Path.of(directory + ".tar.gz")).isRegularFile();
         assertThat(Path.of(directory + ".tar.gz.sha256")).isRegularFile();
+        try (ZipFile jar = new ZipFile(directory.resolve("personnel-archive-service.jar").toFile())) {
+            assertThat(jar.getEntry("BOOT-INF/classes/application-dev.yml")).isNull();
+            assertThat(jar.getEntry("BOOT-INF/classes/application-prod.yml")).isNotNull();
+        }
         String tree = Files.readString(directory.resolve("SHA256SUMS"), StandardCharsets.UTF_8);
         assertThat(tree).contains("  ./personnel-archive-service.jar", "  ./install.sh",
             "  ./service/personnel-archive-service.service.template",
@@ -241,6 +247,7 @@ class UosDeploymentContractTest {
             for (String entry : List.of(
                 "org/springframework/boot/loader/launch/JarLauncher.class",
                 "BOOT-INF/classes/application-prod.yml",
+                "BOOT-INF/classes/application-dev.yml",
                 "BOOT-INF/classes/db/migration/V1__initial_schema.sql",
                 "BOOT-INF/classes/db/migration/V14__canonicalize_open_ended_range_text.class",
                 "BOOT-INF/classes/excel/personnel-archive-template-v1.xlsx")) {

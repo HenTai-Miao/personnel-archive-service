@@ -81,6 +81,19 @@ validate_executable_jar() {
     fi
 }
 
+sanitize_production_jar() {
+    local jar_file="$1"
+    local development_profile="BOOT-INF/classes/application-dev.yml"
+    if jar tf "$jar_file" | grep -Fxq "$development_profile"; then
+        zip -dq "$jar_file" "$development_profile"
+    fi
+    if jar tf "$jar_file" | grep -Fxq "$development_profile"; then
+        fail "生产 JAR 仍包含开发 profile，已拒绝打包。"
+        return 1
+    fi
+    validate_executable_jar "$jar_file"
+}
+
 copy_allowlisted_payload() {
     local bundle_directory="$1"
     install -d -m 0755 \
@@ -182,6 +195,7 @@ main() {
     fi
     require_command jar
     require_command unzip
+    require_command zip
     require_command tar
     require_command awk
     require_command grep
@@ -215,6 +229,7 @@ main() {
     staging_archive_checksum="${STAGING_ROOT}/${selected_name}.tar.gz.sha256"
 
     copy_allowlisted_payload "$staging_bundle"
+    sanitize_production_jar "$staging_bundle/personnel-archive-service.jar"
     jar_digest="$(checksum_value "$staging_bundle/personnel-archive-service.jar")"
     write_build_info "$staging_bundle/BUILD-INFO.txt" "$jar_digest"
     write_inner_manifest "$staging_bundle"
