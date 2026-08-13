@@ -25,6 +25,8 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.DateTimeException;
 import java.time.Period;
+import java.time.Year;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -401,18 +403,44 @@ public class ExcelArchiveReader {
         if (cell == null || cell.getCellType() == CellType.BLANK) return SourceDate.empty();
         String raw = formatter.formatCellValue(cell).strip();
         if (raw.isEmpty()) return SourceDate.empty();
-        SourceDate parsed;
-        try {
-            // Excel 数值序列始终带有月和日；必须按用户可见文本解析，避免 yyyy/yyyy-MM 样式制造隐藏精度。
-            parsed = SourceValueNormalizerV3.normalizeDate(raw);
-        } catch (SourceValueNormalizationException exception) {
-            issues.add(issue("DATE_NOT_EXACT", fieldName, sheet, address, DATE_GUIDANCE));
-            return SourceDate.empty();
+        SourceDate parsed = numericDateAtDisplayedPrecision(cell);
+        if (parsed == null) {
+            try {
+                parsed = SourceValueNormalizerV3.normalizeDate(raw);
+            } catch (SourceValueNormalizationException exception) {
+                issues.add(issue("DATE_NOT_EXACT", fieldName, sheet, address, DATE_GUIDANCE));
+                return SourceDate.empty();
+            }
         }
         if (rejectFuture && parsed.isAfter(LocalDate.now(clock))) {
             issues.add(issue("DATE_IN_FUTURE", fieldName, sheet, address, "出生日期不能晚于当前日期"));
         }
         return parsed;
+    }
+
+    private static SourceDate numericDateAtDisplayedPrecision(Cell cell) {
+        boolean numeric = cell.getCellType() == CellType.NUMERIC
+            || cell.getCellType() == CellType.FORMULA
+                && cell.getCachedFormulaResultType() == CellType.NUMERIC;
+        if (!numeric || !DateUtil.isCellDateFormatted(cell)) return null;
+
+        // 格式只决定用户实际看见的精度；年月日的真实值仍来自 Excel 数值序列，避免两位年份歧义。
+        String format = cell.getCellStyle().getDataFormatString().split(";", 2)[0]
+            .replaceAll("\"[^\"]*\"|\\[[^\\]]*]|\\\\.|_.|\\*.", "")
+            .toLowerCase(Locale.ROOT);
+        if (!format.contains("y")) return null;
+
+        LocalDate date = cell.getLocalDateTimeCellValue().toLocalDate();
+        if (format.contains("d")) return SourceDate.exact(date.toString(), date);
+        String withoutMinutes = format
+            .replaceAll("h+\\s*:?\\s*m+", "")
+            .replaceAll("m+\\s*:?\\s*s+", "");
+        if (withoutMinutes.contains("m")) {
+            YearMonth month = YearMonth.from(date);
+            return SourceDate.month(month.toString(), month);
+        }
+        Year year = Year.from(date);
+        return SourceDate.year(year.toString(), year);
     }
 
     private static String parseDeclarationSigner(String raw) {
