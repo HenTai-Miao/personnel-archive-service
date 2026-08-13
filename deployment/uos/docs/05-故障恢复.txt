@@ -1,0 +1,58 @@
+人员档案数据服务——故障恢复
+============================
+
+一、服务没有启动
+
+按顺序执行，只收集状态和安全日志，不输出环境配置：
+
+    systemctl status personnel-archive-service.service --no-pager
+    journalctl -u personnel-archive-service.service -n 200 --no-pager
+    tail -n 200 /opt/personnel-archive-service/log/personnel-archive-service.log
+    java -version
+    ss -ltn | grep ':18080'
+    systemctl status mysql --no-pager
+
+如果 18080 已被其他进程占用，先确认进程归属，不要随意结束未知业务进程。安装器
+在发现端口占用时会停止，不会抢占端口。
+
+二、数据库认证或授权失败
+
+1. 确认 MySQL 正常运行且监听 127.0.0.1:3306。
+2. 以数据库管理员身份运行 mysql -u root -p。
+3. 再次执行随包 SQL，轮换 personnel_archive@127.0.0.1 的密码并 SHOW GRANTS。
+4. 立即执行 sudo ./install.sh --reconfigure，隐藏输入同一个新密码。
+5. 重启服务并检查文件日志中的 database、flyway 和 startup 结果。
+
+不要把新密码放到命令行、普通文本、聊天或日志。不要通过修改数据库账号主机为
+通配地址来规避本机连接问题。
+
+三、Flyway 迁移失败
+
+先根据 requestId、flyway 阶段和异常类型确认原因，常见原因是权限不足、数据库
+不是预期空库、旧表被人工修改或 MySQL 版本不兼容。修复实际原因后重启服务，
+Flyway 会依据 flyway_schema_history 安全继续。不要删除、伪造或手工改写迁移
+记录；最终检查 version 14 的 success 必须为 1。
+
+四、JAR 更新后需要恢复
+
+保留上一份已经校验通过的完整离线包。使用该包重新运行 sudo ./install.sh，可替换
+JAR 和 systemd 单元，同时保留数据库密码、三项安全密钥和 log 历史。安装前后都
+核对 SHA256SUMS。不要从不明来源单独拿一个 JAR 覆盖生产文件。
+
+五、安全密钥和环境配置恢复
+
+三项安全密钥与已有数据绑定：更换身份字段 HMAC/AES 密钥会导致查询或解密失败，
+更换 token pepper 会使现有会话失效。普通重装和 --reconfigure 都不会更换它们。
+
+每次 --reconfigure 前，安装器会在
+/etc/personnel-archive-service/backups 下生成仅 root 可读的配置备份。该目录同样
+包含敏感信息，只能纳入加密、受控、可恢复验证的系统备份，绝不能对外发送。
+如果环境配置损坏，应由授权管理员从可信加密备份恢复原三项密钥，再校验所有者
+root:root 和权限 0600。不要为已有数据库随意生成新密钥。
+
+六、提交排障材料
+
+优先提供发生时间、requestId、服务状态、固定结果码和已脱敏日志片段。即使应用
+按设计不记录人员字段，发送前仍应人工检查。绝不提供环境配置、数据库导出中的
+人员数据、Excel 原件、照片、密码、令牌或密钥。安装日志可以说明失败步骤，但也
+应只截取必要范围。

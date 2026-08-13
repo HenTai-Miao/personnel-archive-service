@@ -1,0 +1,67 @@
+人员档案数据服务——日常运维与日志排查
+======================================
+
+一、常用服务命令
+
+    sudo systemctl start personnel-archive-service.service
+    sudo systemctl stop personnel-archive-service.service
+    sudo systemctl restart personnel-archive-service.service
+    systemctl status personnel-archive-service.service --no-pager
+    systemctl is-enabled personnel-archive-service.service
+
+服务由 systemd 管理并在异常退出后自动重启。不要在其他目录直接执行 java -jar，
+否则会绕过固定工作目录、专用用户、环境配置和权限保护。
+
+二、两套日志
+
+主要文件日志：
+
+    /opt/personnel-archive-service/log/personnel-archive-service.log
+
+安装日志：
+
+    /opt/personnel-archive-service/log/install-时间.随机值.log
+
+systemd 控制台日志：
+
+    journalctl -u personnel-archive-service.service -n 200 --no-pager
+    journalctl -u personnel-archive-service.service --since today --no-pager
+
+应用日志单文件最大 20MB，保留 30 天，历史文件自动压缩为 .gz，历史总量最多
+1GB。日志目录固定在 JAR 同级的 log，不依赖启动命令当前所在目录。
+
+三、按 requestId 串联问题
+
+每个 API 请求都有服务器生成的 requestId，响应头 X-Request-Id 和内部错误响应都
+会携带它。拿到编号后执行（把示例编号换成实际值）：
+
+    grep 'requestId=9c1ebd77-示例' /opt/personnel-archive-service/log/personnel-archive-service.log
+    journalctl -u personnel-archive-service.service --no-pager | grep 'requestId=9c1ebd77-示例'
+
+可以由此串起请求进入、认证、导入、查询、查看、删除、导出、失败和耗时检查点。
+业务日志只记录内部 ID、数量、结果码和耗时，不记录姓名、搜索词、Excel 内容、
+身份证、手机号、地址、照片、令牌、密码、删除原因正文或完整本地路径。
+
+四、常见检查
+
+    df -h /opt
+    du -sh /opt/personnel-archive-service/log
+    ss -ltn | grep ':18080'
+    java -version
+    systemctl status mysql --no-pager
+
+服务启动失败时先找同一时间的 startup、database、flyway 检查点，再看末尾异常类型
+和安全化调用栈。不要为了排障打开 SQL 参数、HTTP 请求正文或 Excel 单元格的全量
+DEBUG；这会把人员敏感信息带入日志。
+
+五、权限与配置
+
+只用下面命令看元数据，不要输出配置内容：
+
+    sudo stat /etc/personnel-archive-service/personnel-archive-service.env
+    sudo stat /opt/personnel-archive-service/personnel-archive-service.jar
+    sudo stat /opt/personnel-archive-service/log
+
+环境配置必须是 root:root 和 0600。不要把该文件复制到工单、聊天、普通备份目录
+或截图中。需要换数据库密码时，先按 02 文档在 MySQL 中轮换，再执行安装器的
+--reconfigure；不要手工编辑或重新生成三项安全密钥。
