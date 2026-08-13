@@ -71,23 +71,24 @@ class ProductionProfileConfigurationTest {
     }
 
     @Test
-    void usesKingbaseForProduction() throws IOException {
+    void usesMysqlForProduction() throws IOException {
         assertThat(resolvedProperty("spring.datasource.url", Map.of(),
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
-            .isEqualTo("jdbc:kingbase8://10.141.29.96:54321/personnel_archive");
+            .startsWith("jdbc:mysql://127.0.0.1:3306/personnel_archive")
+            .contains("connectionTimeZone=Asia/Shanghai");
         assertThat(resolvedProperty("spring.datasource.driver-class-name", Map.of(),
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
-            .isEqualTo("com.kingbase8.Driver");
-        assertThat(resolvedProperty("spring.flyway.url", Map.of(),
-            "src/main/resources/application.yml",
-            "src/main/resources/application-prod.yml"))
-            .isEqualTo("jdbc:postgresql://10.141.29.96:54321/personnel_archive");
+            .isEqualTo("com.mysql.cj.jdbc.Driver");
         assertThat(resolvedProperty("spring.flyway.locations", Map.of(),
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
-            .isEqualTo("classpath:db/kingbase");
+            .isEqualTo("classpath:db/migration");
+        assertThat(optionalProperty("spring.flyway.url", Map.of(),
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml"))
+            .isEmpty();
     }
 
     @Test
@@ -98,19 +99,14 @@ class ProductionProfileConfigurationTest {
     @Test
     void allowsOperationsToOverrideProductionDatabaseSettings() throws IOException {
         Map<String, String> overrides = Map.of(
-            "PA_DB_URL", "jdbc:kingbase8://db.example:54321/archive",
-            "PA_FLYWAY_DB_URL", "jdbc:postgresql://db.example:54321/archive",
+            "PA_DB_URL", "jdbc:mysql://db.example:3306/archive?connectionTimeZone=Asia/Shanghai",
             "PA_DB_USERNAME", "archive_runtime",
             "PA_DB_PASSWORD", "injected-secret");
 
         assertThat(resolvedProperty("spring.datasource.url", overrides,
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
-            .isEqualTo("jdbc:kingbase8://db.example:54321/archive");
-        assertThat(resolvedProperty("spring.flyway.url", overrides,
-            "src/main/resources/application.yml",
-            "src/main/resources/application-prod.yml"))
-            .isEqualTo("jdbc:postgresql://db.example:54321/archive");
+            .isEqualTo("jdbc:mysql://db.example:3306/archive?connectionTimeZone=Asia/Shanghai");
         assertThat(resolvedProperty("spring.datasource.username", overrides,
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
@@ -119,6 +115,10 @@ class ProductionProfileConfigurationTest {
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
             .isEqualTo("injected-secret");
+        assertThat(optionalProperty("spring.flyway.url", overrides,
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml"))
+            .isEmpty();
     }
 
     private static String resolvedServerPort(String override, String... configPaths)

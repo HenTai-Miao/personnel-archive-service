@@ -6,12 +6,9 @@ spring:
     activate:
       on-profile: prod
   datasource:
-    url: ${PA_DB_URL:jdbc:kingbase8://10.141.29.96:54321/personnel_archive}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: "${PA_DB_URL:jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai}"
     username: ${PA_DB_USERNAME:personnel_archive}
     password: ${PA_DB_PASSWORD:}
-    driver-class-name: com.kingbase8.Driver
   flyway:
-    url: ${PA_FLYWAY_DB_URL:jdbc:postgresql://10.141.29.96:54321/personnel_archive}
-    user: ${PA_DB_USERNAME:personnel_archive}
-    password: ${PA_DB_PASSWORD:}
-    locations: classpath:db/kingbase
+    locations: classpath:db/migration
