@@ -3,6 +3,7 @@ package com.company.personnelarchive.configuration;
 import com.company.personnelarchive.auth.BearerTokenFilter;
 import com.company.personnelarchive.common.ApiError;
 import com.company.personnelarchive.common.ErrorCode;
+import com.company.personnelarchive.common.RequestCorrelation;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -61,7 +62,7 @@ public class SecurityConfiguration {
         configuration.setAllowedOriginPatterns(List.of("http://localhost:*", "http://127.0.0.1:*"));
         configuration.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept"));
-        configuration.setExposedHeaders(List.of("Content-Disposition"));
+        configuration.setExposedHeaders(List.of("Content-Disposition", RequestCorrelation.RESPONSE_HEADER));
         configuration.setAllowCredentials(false);
         configuration.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

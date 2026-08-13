@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.filter.CorsFilter;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -24,6 +25,17 @@ class CorsConfigurationTest {
             .andExpect(status().isOk())
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "null"))
             .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS));
+    }
+
+    @Test
+    void exposesTheRequestIdHeaderToThePackagedClient() throws Exception {
+        var source = new SecurityConfiguration().corsConfigurationSource();
+        standaloneSetup(new Probe()).addFilters(new CorsFilter(source)).build()
+            .perform(get("/api/v1/family-members/search")
+                .header(HttpHeaders.ORIGIN, "null"))
+            .andExpect(status().isOk())
+            .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS,
+                org.hamcrest.Matchers.containsString("X-Request-Id")));
     }
 
     @RestController

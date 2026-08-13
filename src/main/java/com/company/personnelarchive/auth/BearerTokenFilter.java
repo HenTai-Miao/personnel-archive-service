@@ -1,6 +1,7 @@
 /* Bearer 过滤器：把有效短期访问令牌转换为 Spring Security 认证上下文。 */
 package com.company.personnelarchive.auth;
 
+import com.company.personnelarchive.common.RequestCorrelation;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,6 +29,7 @@ public class BearerTokenFilter extends OncePerRequestFilter {
                 var authorities = principal.roles().stream().map(role -> new SimpleGrantedAuthority("ROLE_" + role)).toList();
                 SecurityContextHolder.getContext().setAuthentication(
                     new UsernamePasswordAuthenticationToken(principal, null, authorities));
+                request.setAttribute(RequestCorrelation.USER_ID_ATTRIBUTE, principal.userId());
             });
         }
         chain.doFilter(request, response);
