@@ -3,7 +3,10 @@ package com.company.personnelarchive.person;
 import com.company.personnelarchive.audit.AuditService;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
+import com.company.personnelarchive.common.OperationalLog;
 import com.company.personnelarchive.configuration.ArchiveProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -15,6 +18,7 @@ import java.util.List;
  * 基础详情只返回前四后三脱敏值；完整身份证与手机号必须通过单字段敏感读取显式获取。
  */
 public class PersonQueryService {
+    private static final Logger log = LoggerFactory.getLogger(PersonQueryService.class);
     private final PersonReadMapper mapper;
     private final ArchiveProperties properties;
     private final AuditService audit;
@@ -27,6 +31,7 @@ public class PersonQueryService {
     }
 
     public PersonDtos.Detail detail(long personId, long operatorId) {
+        long started = OperationalLog.started();
         // requireActive 集中落实普通读取不暴露历史软删除快照的规则。
         PersonReadMapper.PersonRow person = requireActive(personId);
         PersonReadMapper.EmploymentRow employment = mapper.findEmployment(properties.tenantId(), personId);
@@ -49,11 +54,14 @@ public class PersonQueryService {
                 photo.byteSize(), photo.widthPixels(), photo.heightPixels()),
             new PersonDtos.ArchiveMetadata(value(person.templateVersion()), person.snapshotVersion(), person.updatedAt().toString()));
         audit.record(operatorId, "VIEW", "PERSON", personId, "SUCCESS", true);
+        log.info("event=person_detail_completed operatorId={} personId={} durationMs={}",
+            operatorId, personId, OperationalLog.elapsedMillis(started));
         return detail;
     }
 
     public PersonDtos.SensitiveValue sensitiveValue(long personId, PersonDtos.SensitiveField field,
                                                      long operatorId) {
+        long started = OperationalLog.started();
         PersonReadMapper.PersonRow person = requireActive(personId);
         String value = switch (field) {
             case IDENTITY_CARD -> person.idCardCiphertext() == null
@@ -61,19 +69,25 @@ public class PersonQueryService {
             case PHONE_NUMBER -> value(person.phoneNumber());
         };
         audit.recordSensitiveView(operatorId, personId, field.name());
+        log.info("event=sensitive_value_completed operatorId={} personId={} field={} durationMs={}",
+            operatorId, personId, field.name(), OperationalLog.elapsedMillis(started));
         return new PersonDtos.SensitiveValue(value);
     }
 
     public PhotoContent photo(long personId, long operatorId) {
+        long started = OperationalLog.started();
         requireActive(personId);
         PersonReadMapper.PhotoRow photo = mapper.findPhoto(properties.tenantId(), personId);
         if (photo == null) throw new BusinessException(ErrorCode.NOT_FOUND, "该档案没有照片");
         audit.record(operatorId, "VIEW", "PERSON", personId, "SUCCESS", true);
+        log.info("event=photo_completed operatorId={} personId={} byteCount={} durationMs={}",
+            operatorId, personId, photo.photoData().length, OperationalLog.elapsedMillis(started));
         return new PhotoContent(photo.photoData(), photo.mimeType(), photo.originalFilename());
     }
 
     public PersonDtos.PersonListPage list(String name, String employeeNo, String department,
                                           int page, int size, long operatorId) {
+        long started = OperationalLog.started();
         if (page < 0 || size < 1 || size > 100) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "分页参数不正确");
         }
@@ -90,10 +104,13 @@ public class PersonQueryService {
             .toList();
         int totalPages = (int) Math.ceil((double) total / size);
         audit.record(operatorId, "VIEW", "PERSON_LIST", null, "SUCCESS", true);
+        log.info("event=person_list_completed operatorId={} page={} size={} returnedCount={} total={} durationMs={}",
+            operatorId, page, size, content.size(), total, OperationalLog.elapsedMillis(started));
         return new PersonDtos.PersonListPage(content, page, size, total, totalPages);
     }
 
     public PersonDtos.FamilySearchPage searchFamily(String name, int page, int size) {
+        long started = OperationalLog.started();
         String normalized = NameNormalizer.normalize(name);
         if (normalized == null || normalized.isBlank()) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "家庭成员姓名不能为空");
         if (page < 0 || size < 1 || size > 100) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "分页参数不正确");
@@ -105,6 +122,8 @@ public class PersonQueryService {
             value(row.organizationName()), value(row.departmentName()), value(row.positionName()), value(row.professionalTitleOrSkill()),
             row.memberName(), value(row.relationshipName()))).toList();
         int totalPages = (int) Math.ceil((double) total / size);
+        log.info("event=family_search_completed page={} size={} returnedCount={} total={} durationMs={}",
+            page, size, results.size(), total, OperationalLog.elapsedMillis(started));
         return new PersonDtos.FamilySearchPage(results, page, size, total, totalPages);
     }
 
