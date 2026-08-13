@@ -3,62 +3,70 @@
 
 一、确认目录校验成功
 
-进入解压后的离线目录，先执行：
+进入解压后的离线目录执行：
 
     sha256sum --check SHA256SUMS
-    chmod +x install.sh
+    chmod +x install.sh start-prod.sh
 
-所有条目必须显示 OK。然后确认已经按 02 文档轮换 MySQL 应用密码并完成授权。
+所有条目必须显示 OK。随后确认 /data 已存在，并已按 02-数据库授权.txt 完成 GRANT 与
+SHOW GRANTS 核对。
 
 二、首次安装
 
     sudo ./install.sh
 
-安装器按 10 个步骤检查 Java 21、systemd、2 GiB 可用空间、包内校验、服务账号、
-配置权限、日志目录、服务启动和 18080 端口。数据库密码会隐藏输入两次；三项安全
-密钥由目标电脑上的 openssl 随机生成，不会显示或写入日志。
+安装器按 9 个步骤检查包完整性、Java 21、systemd、/data 初始空间、服务账号、日志目录、
+服务启动和 18080 端口。数据库连接和三项安全值已经固定在 prod 并包含在 JAR 中，安装器
+不会询问、生成或另外保存这些值。
 
 安装结果固定为：
 
-    /opt/personnel-archive-service/personnel-archive-service.jar
-    /opt/personnel-archive-service/log/personnel-archive-service.log
-    /opt/personnel-archive-service/log/install-时间.随机值.log
-    /etc/personnel-archive-service/personnel-archive-service.env
+    /data/personnel-archive-service/personnel-archive-service.jar
+    /data/personnel-archive-service/log/log.YYYY-MM-DD.log
+    /data/personnel-archive-service/log/install-时间.随机值.log
     /etc/systemd/system/personnel-archive-service.service
 
-环境配置归 root:root、权限 0600；服务以无登录权限的 personnel-archive 专用用户
-运行。不要用 root 身份手工运行 JAR。
+服务以无登录权限的 personnel-archive 专用用户运行。不要用 root 身份手工执行 JAR，
+也不要从解压目录直接运行 JAR。
 
-三、两种可选模式
+三、只安装或独立启动
 
 只安装文件、不在本次执行中启用或启动：
 
     sudo ./install.sh --no-start
 
-核对完成后启用并启动：
+安装完成后可使用包内脚本：
 
-    sudo systemctl enable --now personnel-archive-service.service
+    sudo ./start-prod.sh
 
-MySQL 应用密码以后再次轮换时：
+如果不传完整安装包，首次部署只需要把下面两个文件放到固定目录：
 
-    sudo ./install.sh --reconfigure
+    /data/personnel-archive-service/personnel-archive-service.jar
+    /data/personnel-archive-service/启动prod环境.sh
 
-普通重复执行 sudo ./install.sh 会更新 JAR 和 service 文件，但原数据库密码、三项
-安全密钥和历史日志全部保留。--reconfigure 会备份原环境配置，只更换数据库密码，
-不会改变三项密钥。
+然后赋权并执行：
+
+    cd /data/personnel-archive-service
+    chmod +x 启动prod环境.sh
+    sudo ./启动prod环境.sh
+
+脚本会检查 Java 21，创建专用服务账号和 log 目录，安装或更新 systemd 服务单元，并启动
+或重启指定 JAR，不需要先运行 install.sh，也不需要外部环境文件。普通重复执行 install.sh
+会更新 JAR 和服务单元并保留全部历史日志；三项安全值随同一个生产 JAR 永久固定。
 
 四、服务和日志验证
 
     systemctl is-active personnel-archive-service.service
     systemctl status personnel-archive-service.service --no-pager
     ss -ltn | grep ':18080'
-    ls -ld /opt/personnel-archive-service/log
-    tail -n 100 /opt/personnel-archive-service/log/personnel-archive-service.log
+    ls -ld /data/personnel-archive-service/log
+    tail -n 100 /data/personnel-archive-service/log/log.$(date +%F).log
     journalctl -u personnel-archive-service.service -n 100 --no-pager
 
-状态应为 active，18080 应处于监听，文件日志中应看到 prod、Java 版本、数据库目标
-127.0.0.1:3306/personnel_archive、Flyway 结果和服务启动检查点。日志只显示必要安全
-密钥“已配置/未配置”，绝不能显示密钥值或数据库密码。
+状态应为 active，18080 应监听。应用每天直接写一份 `log.YYYY-MM-DD.log` 纯文本日志，
+不压缩、不按大小分片，也不自动删除。文件日志应看到 prod、Java 版本、日志路径、数据库目标
+127.0.0.1:3306/personnel_archive、数据库连接、Flyway 和服务就绪检查点。安全密钥只
+记录“已配置/未配置”，不能出现值；日志也不能出现数据库密码。
 
 五、Flyway V1—V14 验证
 
@@ -76,12 +84,10 @@ MySQL 应用密码以后再次轮换时：
       FROM flyway_schema_history
      WHERE version = '14';
 
-最终必须存在 version 14 且 success 为 1。首次空库应由服务自动完成 V1—V14；
-不要手工创建业务表，不要修改 flyway_schema_history，也不要把其他数据库产品的
-表直接复制进来冒充迁移结果。
+最终必须存在 version 14 且 success 为 1。首次空库由服务自动完成 V1—V14；不要手工
+创建业务表、修改 flyway_schema_history 或复制其他数据库的表冒充迁移结果。
 
 六、客户端连接
 
-服务端口默认是 18080。只在公司内部受控网络开放客户端实际需要的访问，MySQL
-3306 保持仅本机使用。客户端 API 基地址应指向这台服务电脑的内部地址和 18080，
-而不是直接连接 MySQL。
+服务端口是 18080。只在公司内部受控网络开放客户端需要的访问，MySQL 3306 保持仅本机
+使用。客户端 API 基地址应指向这台服务电脑的内部地址和 18080，不能直接连接 MySQL。

@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -194,9 +195,52 @@ class ImportOperationalLoggingTest {
             service.history(1, 20, 9L);
 
             assertThat(logs.joined())
-                .contains("event=import_history_completed", "operatorId=9", "page=1", "size=20",
+                .contains("event=import_history_started", "operatorId=9", "page=1", "size=20",
+                    "event=import_history_completed",
                     "returnedCount=1", "total=21", "durationMs=")
                 .doesNotContain("operator-name-secret-sentinel", FILE_NAME, CELL_MESSAGE);
+        }
+    }
+
+    @Test
+    void logsHistoryValidationFailureWithOnlyAFixedCode() {
+        ImportHistoryService service = new ImportHistoryService(mock(ImportMapper.class), properties(),
+            mock(AuditService.class));
+
+        try (var logs = LogCapture.attach(ImportHistoryService.class)) {
+            assertThatThrownBy(() -> service.history(-1, 20, 9L)).isInstanceOf(BusinessException.class);
+
+            assertThat(logs.joined())
+                .contains("event=import_history_started", "operatorId=9", "page=-1", "size=20",
+                    "event=import_history_failed", "code=VALIDATION_ERROR", "durationMs=");
+        }
+    }
+
+    @Test
+    void logsUnknownBatchFailureWithoutItsMessage() {
+        ImportMapper mapper = mock(ImportMapper.class);
+        ImportItemService items = mock(ImportItemService.class);
+        doAnswer(invocation -> {
+            ((ImportMapper.BatchInsert) invocation.getArgument(0)).id = 31L;
+            return 1;
+        }).when(mapper).insertBatch(any());
+        when(items.precheck(anyLong(), any(Integer.class), any(), any(), anyLong()))
+            .thenReturn(new ImportDtos.ItemResult(41L, FILE_NAME, "IMPORTED", "IMPORTED", "", null));
+        doThrow(new IllegalStateException("batch-message-secret-sentinel"))
+            .when(mapper).refreshBatch(31L);
+        ImportBatchService service = new ImportBatchService(mapper, items, properties());
+        var file = new MockMultipartFile("files", FILE_NAME,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", new byte[]{1});
+
+        try (var logs = LogCapture.attach(ImportBatchService.class)) {
+            assertThatThrownBy(() -> service.precheck(List.of(file), 9L))
+                .isInstanceOf(IllegalStateException.class);
+
+            assertThat(logs.joined())
+                .contains("event=import_batch_started", "batchId=31", "fileCount=1",
+                    "event=import_batch_failed", "code=INTERNAL_ERROR",
+                    "exceptionType=java.lang.IllegalStateException", "durationMs=")
+                .doesNotContain("batch-message-secret-sentinel", FILE_NAME);
         }
     }
 

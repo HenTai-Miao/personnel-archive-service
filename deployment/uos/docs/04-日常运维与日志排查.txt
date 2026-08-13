@@ -3,65 +3,74 @@
 
 一、常用服务命令
 
+推荐使用已经传到服务器上的启动脚本：
+
+    sudo ./启动prod环境.sh
+
+也可以直接管理 systemd：
+
     sudo systemctl start personnel-archive-service.service
     sudo systemctl stop personnel-archive-service.service
     sudo systemctl restart personnel-archive-service.service
     systemctl status personnel-archive-service.service --no-pager
     systemctl is-enabled personnel-archive-service.service
 
-服务由 systemd 管理并在异常退出后自动重启。不要在其他目录直接执行 java -jar，
-否则会绕过固定工作目录、专用用户、环境配置和权限保护。
+服务异常退出后由 systemd 自动重启。不要在其他目录执行 java -jar，否则会绕过固定工作
+目录、专用用户和权限保护。
 
-二、两套日志
+二、文件日志与 journal
 
-主要文件日志：
+当天应用日志（YYYY-MM-DD 替换为当天日期）：
 
-    /opt/personnel-archive-service/log/personnel-archive-service.log
+    /data/personnel-archive-service/log/log.YYYY-MM-DD.log
 
 安装日志：
 
-    /opt/personnel-archive-service/log/install-时间.随机值.log
+    /data/personnel-archive-service/log/install-时间.随机值.log
 
 systemd 控制台日志：
 
     journalctl -u personnel-archive-service.service -n 200 --no-pager
     journalctl -u personnel-archive-service.service --since today --no-pager
 
-应用日志单文件最大 20MB，保留 30 天，历史文件自动压缩为 .gz，历史总量最多
-1GB。日志目录固定在 JAR 同级的 log，不依赖启动命令当前所在目录。
+应用日志按自然日切换，每天直接写一份可读的纯文本文件：
 
-三、按 requestId 串联问题
+    log.YYYY-MM-DD.log
 
-每个 API 请求都有服务器生成的 requestId，响应头 X-Request-Id 和内部错误响应都
-会携带它。拿到编号后执行（把示例编号换成实际值）：
+日志不压缩，不按文件大小分片，不设置保留天数或历史总量上限，历史日志不会自动删除。
+当天日志从第一行开始就写入带日期的文件，不再生成通用活动文件，也不需要跨日后解压。
+必须由运维
+人员长期监控 /data 空间，并把需要长期保存的日志纳入公司受控备份；应用本身不清理。
 
-    grep 'requestId=9c1ebd77-示例' /opt/personnel-archive-service/log/personnel-archive-service.log
+三、记录的业务检查点
+
+日志完整记录以下流程的开始、成功、已知失败或未知失败以及耗时：服务启动、三项安全
+配置检查、数据库连接、Flyway；登录、刷新、退出；导入批次、单文件导入、重复覆盖或
+跳过、导入历史；档案列表、家庭成员搜索、档案详情；身份证/手机号查看、照片查看；
+单份/批量导出和软删除。记录内部用户 ID、人员 ID、批次/条目 ID、页码、数量、固定
+结果码、字节数、requestId 和安全化异常类型，不记录业务字段正文。
+
+四、按 requestId 串联问题
+
+每个 API 请求都有服务器生成的 requestId，响应头 X-Request-Id 和内部错误响应会携带
+它。拿到编号后执行：
+
+    grep 'requestId=9c1ebd77-示例' /data/personnel-archive-service/log/log.$(date +%F).log
     journalctl -u personnel-archive-service.service --no-pager | grep 'requestId=9c1ebd77-示例'
 
-可以由此串起请求进入、认证、导入、查询、查看、删除、导出、失败和耗时检查点。
-业务日志只记录内部 ID、数量、结果码和耗时，不记录姓名、搜索词、Excel 内容、
-身份证、手机号、地址、照片、令牌、密码、删除原因正文或完整本地路径。
+可由此串起请求进入、认证、导入、查询、查看、删除、导出、失败和耗时。日志不记录
+密码、密钥、令牌、姓名、搜索词、Excel 内容、身份证、手机号、地址、照片、删除原因
+正文、请求正文或完整本地路径。
 
-四、常见检查
+五、磁盘、端口和权限检查
 
-    df -h /opt
-    du -sh /opt/personnel-archive-service/log
+    df -h /data
+    du -sh /data/personnel-archive-service/log
     ss -ltn | grep ':18080'
     java -version
     systemctl status mysql --no-pager
+    sudo stat /data/personnel-archive-service/personnel-archive-service.jar
+    sudo stat /data/personnel-archive-service/log
 
-服务启动失败时先找同一时间的 startup、database、flyway 检查点，再看末尾异常类型
-和安全化调用栈。不要为了排障打开 SQL 参数、HTTP 请求正文或 Excel 单元格的全量
-DEBUG；这会把人员敏感信息带入日志。
-
-五、权限与配置
-
-只用下面命令看元数据，不要输出配置内容：
-
-    sudo stat /etc/personnel-archive-service/personnel-archive-service.env
-    sudo stat /opt/personnel-archive-service/personnel-archive-service.jar
-    sudo stat /opt/personnel-archive-service/log
-
-环境配置必须是 root:root 和 0600。不要把该文件复制到工单、聊天、普通备份目录
-或截图中。需要换数据库密码时，先按 02 文档在 MySQL 中轮换，再执行安装器的
---reconfigure；不要手工编辑或重新生成三项安全密钥。
+数据库连接和三项安全值已经固定在 JAR 的 prod 配置中。JAR 必须由 root 管理，不要上传
+公网或发送给无关人员；变更数据库密码或三项安全值都必须重新构建交付包。

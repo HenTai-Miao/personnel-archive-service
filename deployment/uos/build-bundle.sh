@@ -102,12 +102,13 @@ copy_allowlisted_payload() {
         "$bundle_directory/docs"
     install -m 0644 "$JAR_FILE" "$bundle_directory/personnel-archive-service.jar"
     install -m 0755 "$SCRIPT_DIR/install.sh" "$bundle_directory/install.sh"
+    install -m 0755 "$SCRIPT_DIR/start-prod.sh" "$bundle_directory/start-prod.sh"
     install -m 0644 \
         "$SCRIPT_DIR/service/personnel-archive-service.service.template" \
         "$bundle_directory/service/personnel-archive-service.service.template"
     install -m 0644 \
-        "$SCRIPT_DIR/mysql/01-轮换应用密码并授权.sql" \
-        "$bundle_directory/mysql/01-轮换应用密码并授权.sql"
+        "$SCRIPT_DIR/mysql/01-确认应用账号授权.sql" \
+        "$bundle_directory/mysql/01-确认应用账号授权.sql"
     install -m 0644 "$SCRIPT_DIR/docs/01-安装前检查.txt" "$bundle_directory/docs/01-安装前检查.txt"
     install -m 0644 "$SCRIPT_DIR/docs/02-数据库授权.txt" "$bundle_directory/docs/02-数据库授权.txt"
     install -m 0644 "$SCRIPT_DIR/docs/03-离线安装与验证.txt" "$bundle_directory/docs/03-离线安装与验证.txt"
@@ -132,7 +133,8 @@ write_build_info() {
         printf 'BundleDate=%s\n' "$BUNDLE_DATE"
         printf 'SourceCommit=%s\n' "$commit"
         printf 'JarSHA256=%s\n' "$jar_digest"
-        printf 'ContainsCredentials=no\n'
+        printf 'ContainsFixedProductionDatabaseCredential=yes\n'
+        printf 'ContainsFixedProductionSecurityKeys=yes\n'
         printf 'ContainsPersonnelData=no\n'
     } > "$output_file"
 }
@@ -143,8 +145,9 @@ write_inner_manifest() {
     local manifest_entries=(
         "./personnel-archive-service.jar"
         "./install.sh"
+        "./start-prod.sh"
         "./service/personnel-archive-service.service.template"
-        "./mysql/01-轮换应用密码并授权.sql"
+        "./mysql/01-确认应用账号授权.sql"
         "./docs/01-安装前检查.txt"
         "./docs/02-数据库授权.txt"
         "./docs/03-离线安装与验证.txt"

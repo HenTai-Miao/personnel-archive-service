@@ -1,46 +1,40 @@
-人员档案数据服务——MySQL 密码轮换与授权
-==========================================
+人员档案数据服务——MySQL 应用账号授权
+======================================
 
-为什么必须执行
-
-旧的应用数据库随机密码曾保存在普通文本中，因此必须视为已暴露。项目首次启动还
-要由 Flyway 建表并依次执行 V1—V14；如果应用账号没有 personnel_archive 库的
-权限，服务会在启动阶段失败。
+项目首次启动需要 Flyway 在 personnel_archive 库执行 V1—V14，日常业务也要读写该库。
+若应用账号没有库级权限，服务会在数据库连接或 Flyway 阶段失败。
 
 一、在目标电脑本地进入 MySQL
 
     mysql -u root -p
 
-密码提示出现后再输入数据库管理员凭据，命令行中不要附带密码。进入 mysql> 后，
-执行离线目录内的 SQL 文件；把下面示例路径换成目标电脑的真实绝对路径：
+密码提示出现后再输入数据库管理员凭据，不要把密码附在命令行。进入 mysql> 后执行：
 
-    SOURCE /实际路径/mysql/01-轮换应用密码并授权.sql;
+    SOURCE /实际解压路径/mysql/01-确认应用账号授权.sql;
 
-也可以在 mysql> 中逐条执行该文件里的 ALTER USER、GRANT 和 SHOW GRANTS。
+随包 SQL 只执行 GRANT 和 SHOW GRANTS，不会创建账号，也不会修改既有密码。
 
-二、立即接住新随机密码
+二、核对授权范围
 
-ALTER USER 的结果会显示 personnel_archive@127.0.0.1 的新随机密码。只临时复制
-这一项，随后直接运行 install.sh，在隐藏输入提示中粘贴两次。不要粘贴到聊天，
-不要保存到普通文本文件，不要放入 application-prod.yml，不要写进脚本、命令行、
-截图或安装说明。完成安装后清除剪贴板。
+SHOW GRANTS 必须确认 personnel_archive@127.0.0.1 对 `personnel_archive`.* 拥有授权。
+账号主机必须是 127.0.0.1，不应改为可从任意地址连接的通配主机。GRANT 立即生效，
+无需再执行 FLUSH PRIVILEGES。
 
-三、核对授权范围
+同一个应用数据源同时负责 Flyway V1—V14 和业务读写，因此该库内需要建表、改表、
+索引、查询和写入权限；不要给应用账号 MySQL 全局权限，也不要让服务使用 root。
 
-SHOW GRANTS 的结果必须能确认该账号对 `personnel_archive`.* 拥有授权。账号主机
-必须是 127.0.0.1，而不是可从任意地址连接的通配主机。SQL 已直接修改权限，
-不需要另外执行 FLUSH PRIVILEGES。
+三、固定密码注意事项
 
-本项目用同一应用数据源完成 Flyway V1—V14 和业务读写，因此该库内需要建表、
-改表、索引、查询和写入权限。不要给应用账号 MySQL 全局权限，也不要把数据库
-管理员账号写入服务配置。
+本次 JAR 的 prod 配置已固定为你提供的应用账号密码。不要执行会随机更改该账号密码的
+SQL，否则数据库会与 JAR 不一致而无法启动。不要把密码粘贴到聊天、保存到普通文本文
+件、写进运维命令输出或截图。
+
+以后如果确实需要修改数据库密码，必须同时修改项目的 application-prod.yml，重新执行
+Java 21 完整测试并重新制作 JAR/离线包。仅重复运行 install.sh 不会修改 JAR 内配置。
 
 四、执行顺序
 
-1. 停止正在使用旧密码的人员档案服务（首次安装可跳过）。
-2. 执行随包 SQL，轮换密码并检查授权。
-3. 首次安装运行 sudo ./install.sh；已有安装运行 sudo ./install.sh --reconfigure。
-4. 确认服务 active，并按 03 文档检查 flyway_schema_history 的 version 14。
-
---reconfigure 只替换数据库密码，会保留 token pepper、身份字段 HMAC 密钥和
-身份字段 AES 密钥。不要为已有数据库重新生成这三项密钥。
+1. 在目标 MySQL 执行随包授权 SQL并核对 SHOW GRANTS。
+2. 执行 sudo ./install.sh。
+3. 确认服务 active、18080 已监听。
+4. 按 03 文档确认 flyway_schema_history 最终 version 为 14 且 success 为 1。

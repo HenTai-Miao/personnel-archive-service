@@ -29,11 +29,11 @@ macOS 本机联调可在仓库根目录双击 `启动本地测试.command`，它
 
 ## 生产 MySQL
 
-`prod` profile 默认监听 `18080`，使用 MySQL Connector/J 和 `classpath:db/migration`。默认数据源指向同机 `127.0.0.1:3306/personnel_archive`；远程或不同端口的生产数据库必须通过 `PA_DB_URL` 覆盖完整 JDBC URL，并保留 `connectionTimeZone=Asia/Shanghai`。
+`prod` profile 固定监听 `18080`，使用 MySQL Connector/J 和 `classpath:db/migration`。数据源固定指向同机 `127.0.0.1:3306/personnel_archive`，固定使用已经提供的应用账号和密码，并保留 `connectionTimeZone=Asia/Shanghai`。按当前生产交付约定，`PA_DB_*`、`PA_SERVER_PORT` 和 `PA_LOG_*` 均不能覆盖这些值；数据库密码不得打印到终端、日志或文档中。
 
-生产首次启动前至少配置 `SPRING_PROFILES_ACTIVE=prod`、`PA_DB_USERNAME`、`PA_DB_PASSWORD` 和三项安全密钥。Flyway 使用同一应用数据源执行 MySQL V1–V14，不再使用独立的 Flyway URL。部署前由 DBA 创建数据库 `personnel_archive`、账号并授予最小权限；Flyway 不创建数据库本身，也不迁移其他数据库产品中的数据。
+三项安全值也按用户明确要求固定在 `prod` 配置中，生产启动不再读取外部密钥文件。Flyway 使用同一应用数据源执行 MySQL V1–V14，不再使用独立的 Flyway URL。部署前由 DBA 创建数据库 `personnel_archive`、固定应用账号并完成库级授权；Flyway 不创建数据库本身，也不迁移其他数据库产品中的数据。若以后修改数据库密码或三项安全值，必须重新完成 Java 21 验证并制作离线包；已有数据只能继续使用原 HMAC/AES 值。
 
-部署后须在目标 MySQL 验收迁移、默认管理员登录、导入、覆盖、查询、软删除和 XLSX/ZIP 导出。生产凭据和三项安全密钥只能通过部署环境或秘密管理系统注入。仓库不提供外置 `config/`，也不保存任何生产秘密。
+部署后须在目标 MySQL 验收迁移、默认管理员登录、导入、覆盖、查询、软删除和 XLSX/ZIP 导出。当前离线交付的固定数据库凭据和三项安全值都包含在 JAR 中，因此 JAR 必须作为敏感生产安装介质保管，不得提交、推送、公开上传或发送给无关人员。
 
 生产 Excel 模板路径固定为 `classpath:/excel/personnel-archive-template-v1.xlsx`；参考空表中的失效命名范围不会被使用。
 
@@ -52,36 +52,38 @@ macOS 本机联调可在仓库根目录双击 `启动本地测试.command`，它
 `-1`、`-2`，不会覆盖旧包。制作脚本会核对 Spring Boot 启动入口、`prod` 配置、
 Flyway V1/V14 和生产 Excel 模板，并为目录内每个白名单文件生成 `SHA256SUMS`；它
 不会重新执行 Maven。制作器会从临时生产 JAR 副本中移除内嵌的
-`application-dev.yml`，原始 Maven JAR 和本地联调配置保持不变；最终包不会携带
-开发配置、生产秘密、人员数据、本机附件或 macOS `._` AppleDouble 元数据。
+`application-dev.yml`，原始 Maven JAR 和本地联调配置保持不变。按用户明确要求，最终
+JAR 内含固定 `prod` 数据库连接（包括已提供的应用密码）和三项固定安全值，因此离线包
+本身必须按敏感生产安装介质保管；制作器不会携带人员数据、本机附件或 macOS
+`._` AppleDouble 元数据。
 
 目标统信 UOS 电脑须预装 Java 21、MySQL 8 和基本系统命令。先按包内
-`docs/02-数据库授权.txt` 在目标机轮换 `personnel_archive@127.0.0.1` 密码并授权，
-再以 root 运行 `./install.sh`。首次安装隐藏输入数据库密码，并在离线电脑本机生成
-三项安全密钥；普通重复安装保留密码、密钥和日志，`--reconfigure` 只更换数据库
-密码并保留三项密钥，`--no-start` 可跳过本次启用/启动。安装器不联网、不调用包
-管理器，也不尝试从制作电脑连接目标 MySQL。
+`docs/02-数据库授权.txt` 在目标机核对 `personnel_archive@127.0.0.1` 的固定账号授权，
+再以 root 运行 `./install.sh`。数据库连接已经固定在 `prod` 配置中，安装器不会询问或
+记录数据库密码；三项安全值已经固定在 prod JAR 中，普通重复安装保留全部日志，
+`--no-start` 可跳过本次启用/启动。安装器不联网、不调用包管理器，
+也不尝试从制作电脑连接目标 MySQL。
 
-固定安装位置为 `/opt/personnel-archive-service`，受保护配置位于
-`/etc/personnel-archive-service/personnel-archive-service.env`（`root:root`、`0600`），
-systemd 服务以无登录权限的 `personnel-archive` 用户运行。安装、授权、验证、日志
-查询和恢复命令均以中文文档随包交付。
+固定安装位置为 `/data/personnel-archive-service`，不会改动 `/opt` 中的 MySQL、JDK 或
+其他软件。systemd 服务以无登录权限的 `personnel-archive` 用户运行，不需要外部环境
+文件。首次只传固定路径的生产 JAR 和 `启动prod环境.sh` 时，脚本也能创建服务账号、
+日志目录与 systemd 单元后启动。安装、授权、验证、日志查询和恢复命令均以中文文档随包交付。
 
 ## 生产运行日志
 
-`prod` 默认同时保留控制台日志和文件日志。文件默认写入进程工作目录下的
-`./log/personnel-archive-service.log`；历史文件按日期和序号轮转并压缩为 `.gz`，单个文件最大
-20 MB，保留最近 30 个周期，历史文件总量最多 1 GB。可通过以下环境变量覆盖位置：
+`prod` 默认同时保留控制台日志和每日纯文本文件日志。当天第一条日志直接写入进程工作
+目录下的 `./log/log.YYYY-MM-DD.log`，例如 `./log/log.2026-08-13.log`。跨日后直接写入
+下一日期文件；同一天服务重启时继续追加当天文件。
 
-```bash
-PA_LOG_FILE=./log/personnel-archive-service.log
-PA_LOG_ARCHIVE_PATTERN=./log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz
-```
+日志不压缩，不按大小分片，不限制保留天数或历史总量，也不自动删除。生产配置没有
+单独的通用活动日志名，没有 `.gz`、`%i`、`max-file-size`、`max-history` 或
+`total-size-cap`，并且不接受 `PA_LOG_*` 环境变量覆盖。运维人员需要自行监控 `/data`
+磁盘空间。
 
 标准 systemd 安装路径下可分别查看文件日志和控制台日志：
 
 ```bash
-tail -F /opt/personnel-archive-service/log/personnel-archive-service.log
+tail -F /data/personnel-archive-service/log/log.$(date +%F).log
 journalctl -u personnel-archive-service -f
 ```
 

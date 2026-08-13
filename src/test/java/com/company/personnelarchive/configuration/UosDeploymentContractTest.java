@@ -26,10 +26,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class UosDeploymentContractTest {
     private static final Path ROOT = Path.of("").toAbsolutePath().normalize();
     private static final Path INSTALLER = ROOT.resolve("deployment/uos/install.sh");
+    private static final Path STARTER = ROOT.resolve("deployment/uos/start-prod.sh");
     private static final Path BUILDER = ROOT.resolve("deployment/uos/build-bundle.sh");
     private static final Path UNIT = ROOT.resolve(
         "deployment/uos/service/personnel-archive-service.service.template");
-    private static final Path SQL = ROOT.resolve("deployment/uos/mysql/01-轮换应用密码并授权.sql");
+    private static final Path SQL = ROOT.resolve("deployment/uos/mysql/01-确认应用账号授权.sql");
     private static final List<Path> DOCS = List.of(
         ROOT.resolve("deployment/uos/docs/01-安装前检查.txt"),
         ROOT.resolve("deployment/uos/docs/02-数据库授权.txt"),
@@ -43,8 +44,9 @@ class UosDeploymentContractTest {
     void sourcePayloadExistsAndScriptsUseStrictNonTracingBash() throws IOException {
         assertThat(PAYLOAD).allSatisfy(path -> assertThat(path).isRegularFile());
         assertThat(INSTALLER).isExecutable();
+        assertThat(STARTER).isExecutable();
         assertThat(BUILDER).isExecutable();
-        for (Path script : List.of(INSTALLER, BUILDER)) {
+        for (Path script : List.of(INSTALLER, STARTER, BUILDER)) {
             String text = Files.readString(script, StandardCharsets.UTF_8);
             assertThat(text).startsWith("#!/usr/bin/env bash\n").contains("set -Eeuo pipefail");
             assertThat(text).doesNotContain("set -x", "set -o xtrace");
@@ -66,22 +68,27 @@ class UosDeploymentContractTest {
     }
 
     @Test
-    void installerContainsTheRootSecretAndBoundedReadinessContracts() throws IOException {
+    void installerContainsTheRootAndBoundedReadinessContracts() throws IOException {
         String text = Files.readString(INSTALLER, StandardCharsets.UTF_8);
         assertThat(text)
             .contains("EUID", "sha256sum --check SHA256SUMS", "JAVA_MAJOR", "21",
-                "getent group", "useradd --system", "IFS= read -r -s", "openssl rand -base64 48",
-                "openssl rand -base64 32", "umask 077", "mktemp", "chmod 0600", "chown root:root",
-                "--reconfigure", "--no-start", "systemctl daemon-reload", "systemctl is-active --quiet",
-                "ss -ltn", "for attempt in", "rewrite_environment_password", "systemd_quote",
-                "PA_TOKEN_PEPPER=", "PA_IDENTITY_HMAC_KEY=", "PA_IDENTITY_ENCRYPTION_KEY=",
+                "getent group", "useradd --system", "DATA_ROOT=\"/data\"",
+                "INSTALL_DIR=\"${DATA_ROOT}/personnel-archive-service\"",
+                "umask 077", "mktemp",
+                "--no-start", "systemctl daemon-reload", "systemctl is-active --quiet",
+                "ss -ltn", "for attempt in",
+                "SERVICE_LOG_PATTERN=\"${LOG_DIR}/log.YYYY-MM-DD.log\"",
                 "[[ \"${BASH_SOURCE[0]}\" == \"$0\" ]]", "main \"$@\"")
             .doesNotContain("set -x", "set -o xtrace", "eval ", "envsubst", "source \"$ENV_FILE\"",
-                ". \"$ENV_FILE\"", "cat \"$ENV_FILE\"");
-        assertThat(text.split("openssl rand -base64", -1).length - 1).isGreaterThanOrEqualTo(3);
-        assertThat(text).contains("$'\\r'", "$'\\n'");
-        for (int step = 1; step <= 10; step++) {
-            assertThat(text).contains("[步骤 " + step + "/10]");
+                ". \"$ENV_FILE\"", "cat \"$ENV_FILE\"", "/opt/personnel-archive-service",
+                "IFS= read -r -s", "--reconfigure", "read_database_password",
+                "rewrite_environment_password", "PA_DB_PASSWORD=", "PA_DB_URL=", "PA_DB_USERNAME=",
+                "PA_LOG_FILE=", "PA_LOG_ARCHIVE_PATTERN=", "PA_LOG_MAX_FILE_SIZE=",
+                "PA_LOG_MAX_HISTORY=", "PA_LOG_TOTAL_SIZE_CAP=", "PA_TOKEN_PEPPER=",
+                "PA_IDENTITY_HMAC_KEY=", "PA_IDENTITY_ENCRYPTION_KEY=", "openssl rand",
+                "EnvironmentFile=", "personnel-archive-service.env");
+        for (int step = 1; step <= 9; step++) {
+            assertThat(text).contains("[步骤 " + step + "/9]");
         }
     }
 
@@ -91,9 +98,13 @@ class UosDeploymentContractTest {
         assertThat(text).contains(
             "User=personnel-archive",
             "Group=personnel-archive",
-            "WorkingDirectory=/opt/personnel-archive-service",
-            "EnvironmentFile=/etc/personnel-archive-service/personnel-archive-service.env",
-            "ExecStart=@JAVA_BIN@ -jar /opt/personnel-archive-service/personnel-archive-service.jar",
+            "Documentation=file:/data/personnel-archive-service/log/",
+            "ConditionPathIsReadWrite=/data/personnel-archive-service/log",
+            "ConditionPathExists=/data/personnel-archive-service/personnel-archive-service.jar",
+            "WorkingDirectory=/data/personnel-archive-service",
+            "Environment=SPRING_PROFILES_ACTIVE=prod",
+            "Environment=JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Shanghai",
+            "ExecStart=@JAVA_BIN@ -jar /data/personnel-archive-service/personnel-archive-service.jar",
             "Restart=on-failure",
             "SuccessExitStatus=143",
             "UMask=0027",
@@ -101,94 +112,90 @@ class UosDeploymentContractTest {
             "PrivateTmp=true",
             "ProtectHome=true",
             "ProtectSystem=strict",
-            "ReadWritePaths=/opt/personnel-archive-service/log",
+            "ReadWritePaths=/data/personnel-archive-service/log",
             "StandardOutput=journal",
             "StandardError=journal"
-        ).doesNotContain("User=root", "bash -c", "sh -c");
+        ).doesNotContain("User=root", "bash -c", "sh -c", "/opt/personnel-archive-service",
+            "EnvironmentFile=", "PA_TOKEN_PEPPER", "PA_IDENTITY_HMAC_KEY",
+            "PA_IDENTITY_ENCRYPTION_KEY");
         assertThat(Files.readAllLines(UNIT, StandardCharsets.UTF_8))
             .filteredOn(line -> line.equals("PrivateTmp=true")).hasSize(1);
     }
 
     @Test
-    void mysqlHandoffRotatesAndGrantsWithoutEmbeddingCredentials() throws IOException {
+    void prodLauncherBootstrapsAndStartsTheFixedDataServiceWithBoundedDiagnostics() throws IOException {
+        String text = Files.readString(STARTER, StandardCharsets.UTF_8);
+        assertThat(text)
+            .contains("EUID", "umask 077", "/run/systemd/system",
+                "SERVICE_NAME=\"personnel-archive-service.service\"",
+                "UNIT_FILE=\"/etc/systemd/system/${SERVICE_NAME}\"",
+                "JAR_FILE=\"/data/personnel-archive-service/personnel-archive-service.jar\"",
+                "LOG_DIR=\"/data/personnel-archive-service/log\"",
+                "LOG_FILE=\"${LOG_DIR}/log.$(date +%F).log\"",
+                "APP_USER=\"personnel-archive\"", "APP_GROUP=\"personnel-archive\"",
+                "JAVA_MAJOR", "getent group", "groupadd --system", "useradd --system",
+                "render_service_unit", "install_service_unit", "install -d",
+                "WorkingDirectory=/data/personnel-archive-service",
+                "-jar /data/personnel-archive-service/personnel-archive-service.jar",
+                "\"$JAVA_BIN\" -version", "df -h /data", "du -sh", "systemctl enable --now",
+                "systemctl daemon-reload", "systemctl restart",
+                "systemctl is-active --quiet", "ss -ltn", "for attempt in {1..30}", "sleep 2",
+                "systemctl status", "journalctl -u", "tail -n 100", "exit 1")
+            .doesNotContain("set -x", "set -o xtrace", "EnvironmentFile=",
+                "personnel-archive-service.env", "/opt/personnel-archive-service", "java -jar",
+                "PA_DB_PASSWORD", "PA_TOKEN_PEPPER", "PA_IDENTITY_HMAC_KEY",
+                "PA_IDENTITY_ENCRYPTION_KEY");
+    }
+
+    @Test
+    void prodLauncherRendersASelfContainedServiceUnit(@TempDir Path temporary) throws Exception {
+        Path output = temporary.resolve("personnel-archive-service.service");
+        CommandResult result = run(List.of("/bin/bash", "-c",
+            "set -Eeuo pipefail; source \"$SCRIPT_PATH\"; "
+                + "render_service_unit \"$OUTPUT_FILE\" /opt/java21/bin/java"),
+            Map.of("SCRIPT_PATH", STARTER.toString(), "OUTPUT_FILE", output.toString()));
+
+        assertThat(result.exitCode()).as(result.output()).isZero();
+        assertThat(Files.readString(output, StandardCharsets.UTF_8))
+            .contains("User=personnel-archive", "Group=personnel-archive",
+                "WorkingDirectory=/data/personnel-archive-service",
+                "Environment=SPRING_PROFILES_ACTIVE=prod",
+                "Environment=JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Shanghai",
+                "ExecStart=/opt/java21/bin/java -jar /data/personnel-archive-service/personnel-archive-service.jar",
+                "ReadWritePaths=/data/personnel-archive-service/log")
+            .doesNotContain("EnvironmentFile=", "PA_TOKEN_PEPPER", "PA_IDENTITY_HMAC_KEY",
+                "PA_IDENTITY_ENCRYPTION_KEY");
+    }
+
+    @Test
+    void mysqlHandoffVerifiesTheFixedAccountGrantWithoutChangingItsPassword() throws IOException {
         String sql = Files.readString(SQL, StandardCharsets.UTF_8);
         assertThat(sql)
-            .contains("ALTER USER 'personnel_archive'@'127.0.0.1'", "IDENTIFIED BY RANDOM PASSWORD",
-                "PASSWORD EXPIRE NEVER", "GRANT ALL PRIVILEGES", "ON `personnel_archive`.*",
+            .contains("GRANT ALL PRIVILEGES", "ON `personnel_archive`.*",
                 "SHOW GRANTS FOR 'personnel_archive'@'127.0.0.1'")
-            .doesNotContain("CREATE USER", "FLUSH PRIVILEGES", "IDENTIFIED BY '", "root password", "root密码");
+            .doesNotContain("ALTER USER", "IDENTIFIED BY", "CREATE USER", "FLUSH PRIVILEGES",
+                "root password", "root密码");
 
         String documents = readAll(DOCS);
         assertThat(documents)
             .contains("mysql -u root -p", "安装前", "不要粘贴到聊天", "不要保存到普通文本文件",
-                "127.0.0.1", "flyway_schema_history", "version", "14");
+                "127.0.0.1", "flyway_schema_history", "version", "14",
+                "/data/personnel-archive-service", "每天一份", "log.YYYY-MM-DD.log", "不压缩",
+                "不会自动删除", "启动prod环境.sh", "只需要", "固定在 prod")
+            .doesNotContain("/opt/personnel-archive-service", "--reconfigure", "20MB", "20 MB",
+                "保留 30 天", "1GB", "1 GB", "隐藏输入两次", "轮换应用密码",
+                "personnel-archive-service.YYYY-MM-DD.log.gz",
+                "/data/personnel-archive-service/log/personnel-archive-service.log",
+                "/etc/personnel-archive-service/personnel-archive-service.env",
+                "目标电脑本地生成三项安全密钥");
     }
 
     @Test
     void scriptsPassBashSyntaxValidation() throws Exception {
-        for (Path script : List.of(INSTALLER, BUILDER)) {
+        for (Path script : List.of(INSTALLER, STARTER, BUILDER)) {
             CommandResult result = run(List.of("/bin/bash", "-n", script.toString()), Map.of());
             assertThat(result.exitCode()).as(result.output()).isZero();
         }
-    }
-
-    @Test
-    void passwordRewriteEscapesSystemdValueAndPreservesEveryKey(@TempDir Path temporary) throws Exception {
-        String oldPassword = "old-password-secret-sentinel";
-        String tokenKey = "token-key-secret-sentinel";
-        String hmacKey = "hmac-key-secret-sentinel";
-        String encryptionKey = "encryption-key-secret-sentinel";
-        String replacement = "space # dollar$ equals= quote\" slash\\";
-        Path input = temporary.resolve("existing.env");
-        Path output = temporary.resolve("rewritten.env");
-        String fixture = String.join("\n",
-            "SPRING_PROFILES_ACTIVE=prod",
-            "PA_DB_PASSWORD=\"" + oldPassword + "\"",
-            "PA_TOKEN_PEPPER=\"" + tokenKey + "\"",
-            "CUSTOM_SETTING=keep-this-line-byte-for-byte # comment",
-            "PA_IDENTITY_HMAC_KEY=\"" + hmacKey + "\"",
-            "PA_IDENTITY_ENCRYPTION_KEY=\"" + encryptionKey + "\"") + "\n";
-        Files.writeString(input, fixture, StandardCharsets.UTF_8);
-
-        CommandResult result = run(List.of("/bin/bash", "-c",
-            "set -Eeuo pipefail; source \"$SCRIPT_PATH\"; "
-                + "rewrite_environment_password \"$INPUT_FILE\" \"$OUTPUT_FILE\" \"$TEST_PASSWORD\""),
-            Map.of("SCRIPT_PATH", INSTALLER.toString(), "INPUT_FILE", input.toString(),
-                "OUTPUT_FILE", output.toString(), "TEST_PASSWORD", replacement));
-
-        assertThat(result.exitCode()).as(result.output()).isZero();
-        assertThat(result.output()).doesNotContain(oldPassword, replacement, tokenKey, hmacKey, encryptionKey);
-        String rewritten = Files.readString(output, StandardCharsets.UTF_8);
-        assertThat(rewritten).contains(
-            "PA_DB_PASSWORD=" + systemdQuote(replacement) + "\n",
-            "PA_TOKEN_PEPPER=\"" + tokenKey + "\"\n",
-            "CUSTOM_SETTING=keep-this-line-byte-for-byte # comment\n",
-            "PA_IDENTITY_HMAC_KEY=\"" + hmacKey + "\"\n",
-            "PA_IDENTITY_ENCRYPTION_KEY=\"" + encryptionKey + "\"\n");
-        assertThat(rewritten.lines().filter(line -> line.startsWith("PA_DB_PASSWORD=")).count()).isEqualTo(1);
-    }
-
-    @Test
-    void passwordRewriteRejectsLineBreaksWithoutPrintingSecrets(@TempDir Path temporary) throws Exception {
-        Path input = temporary.resolve("existing.env");
-        Path output = temporary.resolve("rejected.env");
-        Files.writeString(input, String.join("\n",
-            "PA_DB_PASSWORD=\"old\"",
-            "PA_TOKEN_PEPPER=\"token-key-secret-sentinel\"",
-            "PA_IDENTITY_HMAC_KEY=\"hmac-key-secret-sentinel\"",
-            "PA_IDENTITY_ENCRYPTION_KEY=\"encryption-key-secret-sentinel\"") + "\n",
-            StandardCharsets.UTF_8);
-        String rejected = "line-one-secret-sentinel\nline-two-secret-sentinel";
-
-        CommandResult result = run(List.of("/bin/bash", "-c",
-            "set -Eeuo pipefail; source \"$SCRIPT_PATH\"; "
-                + "rewrite_environment_password \"$INPUT_FILE\" \"$OUTPUT_FILE\" \"$TEST_PASSWORD\""),
-            Map.of("SCRIPT_PATH", INSTALLER.toString(), "INPUT_FILE", input.toString(),
-                "OUTPUT_FILE", output.toString(), "TEST_PASSWORD", rejected));
-
-        assertThat(result.exitCode()).isNotZero();
-        assertThat(result.output()).doesNotContain("line-one-secret-sentinel", "line-two-secret-sentinel",
-            "token-key-secret-sentinel", "hmac-key-secret-sentinel", "encryption-key-secret-sentinel");
     }
 
     @Test
@@ -196,7 +203,7 @@ class UosDeploymentContractTest {
         String text = Files.readString(BUILDER, StandardCharsets.UTF_8);
         assertThat(text)
             .contains("mktemp -d", "STAGING_PREFIX", "personnel-archive-service.jar", "SHA256SUMS",
-                "BUILD-INFO.txt", ".tar.gz.sha256", "tar -tzf", "for suffix in", "zip -d",
+                "start-prod.sh", "BUILD-INFO.txt", ".tar.gz.sha256", "tar -tzf", "for suffix in", "zip -d",
                 "BOOT-INF/classes/application-dev.yml", "COPYFILE_DISABLE=1")
             .doesNotContain("cp -R deployment", "cp -a deployment", ".env",
                 "新建 文本文档 (2).txt", "mvn ", "./mvnw", "git clean", "git reset", "git checkout");
@@ -225,6 +232,7 @@ class UosDeploymentContractTest {
         assertThat(directory).isDirectory();
         assertThat(directory.resolve("personnel-archive-service.jar")).isRegularFile();
         assertThat(directory.resolve("install.sh")).isRegularFile().isExecutable();
+        assertThat(directory.resolve("start-prod.sh")).isRegularFile().isExecutable();
         assertThat(directory.resolve("SHA256SUMS")).isRegularFile();
         assertThat(directory.resolve("BUILD-INFO.txt")).isRegularFile();
         assertThat(Path.of(directory + ".tar.gz")).isRegularFile();
@@ -235,9 +243,9 @@ class UosDeploymentContractTest {
             assertThat(jar.getEntry("BOOT-INF/classes/application-prod.yml")).isNotNull();
         }
         String tree = Files.readString(directory.resolve("SHA256SUMS"), StandardCharsets.UTF_8);
-        assertThat(tree).contains("  ./personnel-archive-service.jar", "  ./install.sh",
+        assertThat(tree).contains("  ./personnel-archive-service.jar", "  ./install.sh", "  ./start-prod.sh",
             "  ./service/personnel-archive-service.service.template",
-            "  ./mysql/01-轮换应用密码并授权.sql", "  ./docs/05-故障恢复.txt", "  ./BUILD-INFO.txt")
+            "  ./mysql/01-确认应用账号授权.sql", "  ./docs/05-故障恢复.txt", "  ./BUILD-INFO.txt")
             .doesNotContain("SHA256SUMS  ./SHA256SUMS", ".env", ".git", "target/");
     }
 
@@ -274,10 +282,6 @@ class UosDeploymentContractTest {
         }
     }
 
-    private static String systemdQuote(String value) {
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-    }
-
     private static String readAll(List<Path> paths) throws IOException {
         StringBuilder result = new StringBuilder();
         for (Path path : paths) result.append(Files.readString(path, StandardCharsets.UTF_8)).append('\n');
@@ -295,7 +299,7 @@ class UosDeploymentContractTest {
     }
 
     private static List<Path> payload() {
-        List<Path> paths = new ArrayList<>(List.of(INSTALLER, BUILDER, UNIT, SQL));
+        List<Path> paths = new ArrayList<>(List.of(INSTALLER, STARTER, BUILDER, UNIT, SQL));
         paths.addAll(DOCS);
         return List.copyOf(paths);
     }

@@ -27,7 +27,7 @@ class OperationalStartupLoggerTest {
             .withProperty("spring.datasource.url",
                 "jdbc:mysql://127.0.0.1:3306/personnel_archive?user=user-secret-sentinel&password=db-secret-sentinel")
             .withProperty("server.port", "18080")
-            .withProperty("logging.file.name", "/opt/personnel-archive-service/log/personnel-archive-service.log");
+            .withProperty("logging.file.name", "/data/personnel-archive-service/log/log.%d{yyyy-MM-dd}.log");
         environment.setActiveProfiles("prod");
         ArchiveProperties properties = new ArchiveProperties(1,
             new ArchiveProperties.Security(Duration.ofMinutes(15), Duration.ofDays(7), 100,
@@ -39,9 +39,13 @@ class OperationalStartupLoggerTest {
             logger.logReady(Duration.ofMillis(123));
 
             assertThat(logs.joined())
-                .contains("event=service_ready", "profile=prod", "port=18080",
+                .contains("event=security_configuration_checked",
+                    "tokenPepperConfigured=true", "identityHmacKeyConfigured=true",
+                    "identityEncryptionKeyConfigured=true",
+                    "event=service_ready", "profile=prod", "port=18080",
                     "dbHost=127.0.0.1", "dbPort=3306", "dbSchema=personnel_archive",
-                    "securityKeysConfigured=true", "durationMs=123")
+                    "durationMs=123")
+                .doesNotContain("securityKeysConfigured=")
                 .doesNotContain("jdbc:mysql", "user-secret-sentinel", "db-secret-sentinel",
                     "token-pepper-secret-sentinel", "hmac-key-secret-sentinel",
                     "encryption-key-secret-sentinel");

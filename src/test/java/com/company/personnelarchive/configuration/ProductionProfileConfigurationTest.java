@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,11 +33,11 @@ class ProductionProfileConfigurationTest {
     }
 
     @Test
-    void allowsOperationsToOverrideProductionPort() throws IOException {
+    void keepsProductionPortFixed() throws IOException {
         assertThat(resolvedServerPort("28080",
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
-            .isEqualTo("28080");
+            .isEqualTo("18080");
     }
 
     @Test
@@ -75,8 +76,15 @@ class ProductionProfileConfigurationTest {
         assertThat(resolvedProperty("spring.datasource.url", Map.of(),
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
-            .startsWith("jdbc:mysql://127.0.0.1:3306/personnel_archive")
-            .contains("connectionTimeZone=Asia/Shanghai");
+            .isEqualTo("jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai");
+        assertThat(resolvedProperty("spring.datasource.username", Map.of(),
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml"))
+            .isEqualTo("personnel_archive");
+        assertThat(resolvedProperty("spring.datasource.password", Map.of(),
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml").length())
+            .isGreaterThan(0);
         assertThat(resolvedProperty("spring.datasource.driver-class-name", Map.of(),
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
@@ -92,6 +100,27 @@ class ProductionProfileConfigurationTest {
     }
 
     @Test
+    void embedsStableRequiredSecurityValuesInProduction() throws IOException {
+        String[] files = {
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml"
+        };
+
+        assertThat(resolvedProperty("personnel-archive.security.token-pepper", Map.of(), files))
+            .hasSizeGreaterThanOrEqualTo(32);
+        assertThat(resolvedProperty("personnel-archive.security.identity-hmac-key", Map.of(), files))
+            .hasSizeGreaterThanOrEqualTo(32);
+        assertThat(Base64.getDecoder().decode(resolvedProperty(
+            "personnel-archive.security.identity-encryption-key", Map.of(), files)))
+            .hasSize(32);
+
+        String prod = Files.readString(Path.of("src/main/resources/application-prod.yml"));
+        assertAbsent(prod, "${PA_TOKEN_PEPPER");
+        assertAbsent(prod, "${PA_IDENTITY_HMAC_KEY");
+        assertAbsent(prod, "${PA_IDENTITY_ENCRYPTION_KEY");
+    }
+
+    @Test
     void writesAndRotatesProductionLogsBesideTheWorkingDirectory() throws IOException {
         String[] files = {
             "src/main/resources/application.yml",
@@ -99,36 +128,29 @@ class ProductionProfileConfigurationTest {
         };
 
         assertThat(optionalProperty("logging.file.name", Map.of(), files))
-            .contains("./log/personnel-archive-service.log");
+            .contains("./log/log.%d{yyyy-MM-dd}.log");
         assertThat(optionalProperty("logging.pattern.correlation", Map.of(), files))
             .hasValueSatisfying(value -> assertThat(value).contains("requestId"));
         assertThat(optionalProperty("logging.logback.rollingpolicy.file-name-pattern", Map.of(), files))
-            .contains("./log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz");
+            .isEmpty();
         assertThat(optionalProperty("logging.logback.rollingpolicy.max-file-size", Map.of(), files))
-            .contains("20MB");
+            .isEmpty();
         assertThat(optionalProperty("logging.logback.rollingpolicy.max-history", Map.of(), files))
-            .contains("30");
+            .isEmpty();
         assertThat(optionalProperty("logging.logback.rollingpolicy.total-size-cap", Map.of(), files))
-            .contains("1GB");
-        assertThat(optionalProperty("logging.logback.rollingpolicy.clean-history-on-start", Map.of(), files))
-            .contains("false");
+            .isEmpty();
     }
 
     @Test
-    void allowsOperationsToOverrideProductionLogDestinations() throws IOException {
-        Map<String, String> overrides = Map.of(
-            "PA_LOG_FILE", "/opt/personnel-archive-service/log/personnel-archive-service.log",
-            "PA_LOG_ARCHIVE_PATTERN",
-            "/opt/personnel-archive-service/log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz");
-
-        assertThat(optionalProperty("logging.file.name", overrides,
-            "src/main/resources/application.yml",
-            "src/main/resources/application-prod.yml"))
-            .contains("/opt/personnel-archive-service/log/personnel-archive-service.log");
-        assertThat(optionalProperty("logging.logback.rollingpolicy.file-name-pattern", overrides,
-            "src/main/resources/application.yml",
-            "src/main/resources/application-prod.yml"))
-            .contains("/opt/personnel-archive-service/log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz");
+    void productionConfigurationContainsNoDeploymentPlaceholdersOrLogLimits() throws IOException {
+        String prod = Files.readString(Path.of("src/main/resources/application-prod.yml"));
+        assertAbsent(prod, "${PA_DB_");
+        assertAbsent(prod, "${PA_SERVER_PORT");
+        assertAbsent(prod, "${PA_LOG_");
+        assertAbsent(prod, "max-file-size");
+        assertAbsent(prod, "max-history");
+        assertAbsent(prod, "total-size-cap");
+        assertAbsent(prod, "%i");
     }
 
     @Test
@@ -137,7 +159,7 @@ class ProductionProfileConfigurationTest {
     }
 
     @Test
-    void allowsOperationsToOverrideProductionDatabaseSettings() throws IOException {
+    void ignoresLegacyProductionDatabaseEnvironmentNames() throws IOException {
         Map<String, String> overrides = Map.of(
             "PA_DB_URL", "jdbc:mysql://db.example:3306/archive?connectionTimeZone=Asia/Shanghai",
             "PA_DB_USERNAME", "archive_runtime",
@@ -146,19 +168,23 @@ class ProductionProfileConfigurationTest {
         assertThat(resolvedProperty("spring.datasource.url", overrides,
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
-            .isEqualTo("jdbc:mysql://db.example:3306/archive?connectionTimeZone=Asia/Shanghai");
+            .isEqualTo("jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai");
         assertThat(resolvedProperty("spring.datasource.username", overrides,
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
-            .isEqualTo("archive_runtime");
+            .isEqualTo("personnel_archive");
         assertThat(resolvedProperty("spring.datasource.password", overrides,
             "src/main/resources/application.yml",
-            "src/main/resources/application-prod.yml"))
-            .isEqualTo("injected-secret");
+            "src/main/resources/application-prod.yml").equals("injected-secret"))
+            .isFalse();
         assertThat(optionalProperty("spring.flyway.url", overrides,
             "src/main/resources/application.yml",
             "src/main/resources/application-prod.yml"))
             .isEmpty();
+    }
+
+    private static void assertAbsent(String text, String marker) {
+        assertThat(text.contains(marker)).as("prod configuration must not contain %s", marker).isFalse();
     }
 
     private static String resolvedServerPort(String override, String... configPaths)

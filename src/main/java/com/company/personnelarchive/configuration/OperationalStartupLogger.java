@@ -31,10 +31,16 @@ public final class OperationalStartupLogger {
 
     void logReady(Duration duration) {
         SafeJdbcTarget database = SafeJdbcTarget.parse(environment.getProperty("spring.datasource.url"));
+        ArchiveProperties.Security security = properties.security();
+        log.info("event=security_configuration_checked tokenPepperConfigured={} identityHmacKeyConfigured={} "
+                + "identityEncryptionKeyConfigured={}",
+            security != null && present(security.tokenPepper()),
+            security != null && present(security.identityHmacKey()),
+            security != null && present(security.identityEncryptionKey()));
         log.info("event=service_ready version={} javaVersion={} profile={} port={} logFile={} "
-                + "dbHost={} dbPort={} dbSchema={} securityKeysConfigured={} durationMs={}",
+                + "dbHost={} dbPort={} dbSchema={} durationMs={}",
             safeToken(version()), safeToken(System.getProperty("java.version")), profiles(), port(), logFile(),
-            database.host(), database.port(), database.schema(), securityKeysConfigured(),
+            database.host(), database.port(), database.schema(),
             duration == null ? 0L : Math.max(0L, duration.toMillis()));
     }
 
@@ -65,12 +71,6 @@ public final class OperationalStartupLogger {
         } catch (RuntimeException exception) {
             return "unknown";
         }
-    }
-
-    private boolean securityKeysConfigured() {
-        ArchiveProperties.Security security = properties.security();
-        return security != null && present(security.tokenPepper()) && present(security.identityHmacKey())
-            && present(security.identityEncryptionKey());
     }
 
     private static boolean present(String value) {

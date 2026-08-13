@@ -1,7 +1,13 @@
-# `/data` 生产部署、每日永久日志与启动脚本修订设计
+# `/data` 生产部署、每日纯文本永久日志与启动脚本修订设计
+
+> **安全配置与首次启动部分已被后续确认方案取代：** 三项安全值最终固定在 prod JAR，
+> 不再使用外部环境文件；`启动prod环境.sh` 在只有固定路径 JAR 时也会创建服务账号、
+> log 目录和 systemd 单元。以
+> `2026-08-13-self-contained-prod-security-and-launcher-design.md` 为准。本文件中的目标机
+> 生成密钥、环境文件和“只启动已安装 unit”内容仅为历史方案。
 
 **日期：** 2026-08-13  
-**状态：** 用户已确认需求，等待书面复核  
+**状态：** 用户已书面确认，按后续固定 prod 凭据指示实施
 **目标分支：** `chore/prod-mysql-only`  
 **前置设计：** `2026-08-13-offline-production-bundle-and-operational-logging-design.md`
 
@@ -12,8 +18,8 @@ Flyway V1–V14、Java 21、MySQL 连接目标和业务规则保持不变，只�
 
 1. 服务从 `/opt/personnel-archive-service` 改装到
    `/data/personnel-archive-service`；`/opt` 留给目标电脑既有的 MySQL 和 JDK；
-2. 生产文件日志取消单文件大小、保留天数和历史总量限制，改为每个自然日一份、
-   每日归档后 gzip 压缩、永久保留；
+2. 生产文件日志取消单文件大小、保留天数和历史总量限制，改为每个自然日直接写一份
+   `log.YYYY-MM-DD.log` 纯文本文件，不压缩并永久保留；
 3. 把用户列出的服务启动、配置、数据库、Flyway、认证、导入、查询、敏感查看、
    照片、导出、删除和未知异常全部纳入可验证的日志覆盖表；
 4. 在离线包内提供 `start-prod.sh`，并在桌面另外交付中文名
@@ -30,13 +36,12 @@ Flyway V1–V14、Java 21、MySQL 连接目标和业务规则保持不变，只�
 /data/personnel-archive-service/
 ├── personnel-archive-service.jar       # root:personnel-archive，0640
 └── log/                                # personnel-archive:personnel-archive，0750
-    ├── personnel-archive-service.log   # 当天活动日志，0640
-    ├── personnel-archive-service.YYYY-MM-DD.log.gz
+    ├── log.2026-08-13.log              # 当天活动日志，0640
+    ├── log.2026-08-14.log
     └── install-YYYYMMDD-HHMMSS.随机值.log
 
 /etc/personnel-archive-service/
-├── personnel-archive-service.env       # root:root，0600
-└── backup/                             # root:root，0700
+└── personnel-archive-service.env       # 仅三项安全密钥，root:root，0600
 
 /etc/systemd/system/
 └── personnel-archive-service.service   # root:root，0644
@@ -54,7 +59,7 @@ Java 绝对路径，再把该路径写入 systemd 单元。
 目录；它只安装并启动 `/data` 版本，并在文档中要求操作员验收成功后再人工判断是否
 清理旧目录，避免误删 `/opt` 中其他软件。
 
-## 3. 每日一份、永久保留的文件日志
+## 3. 每日一份、不压缩、永久保留的文件日志
 
 ### 3.1 已选实现
 
@@ -64,26 +69,18 @@ Java 绝对路径，再把该路径写入 systemd 单元。
 
 ```xml
 <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-    <fileNamePattern>${PA_LOG_ARCHIVE_PATTERN}</fileNamePattern>
+    <fileNamePattern>./log/log.%d{yyyy-MM-dd}.log</fileNamePattern>
 </rollingPolicy>
 ```
 
-生产环境的两个路径属性为：
+`RollingFileAppender` 不设置固定 `<file>`；生产配置和 Logback 都使用相对工作目录模式：
 
 ```text
-PA_LOG_FILE=/data/personnel-archive-service/log/personnel-archive-service.log
-PA_LOG_ARCHIVE_PATTERN=/data/personnel-archive-service/log/personnel-archive-service.%d{yyyy-MM-dd}.log.gz
+./log/log.%d{yyyy-MM-dd}.log
 ```
 
-仓库内默认值仍使用相对工作目录：
-
-```text
-./log/personnel-archive-service.log
-./log/personnel-archive-service.%d{yyyy-MM-dd}.log.gz
-```
-
-systemd 把 `WorkingDirectory` 固定到 `/data/personnel-archive-service`，同时由受保护环境
-文件注入绝对日志路径，因此正常部署时日志位置不依赖启动命令所在目录。
+systemd 把 `WorkingDirectory` 固定到 `/data/personnel-archive-service`，不再通过环境
+文件覆盖日志属性，因此正常部署时日志固定落到 JAR 同级目录。
 
 ### 3.2 明确取消的设置
 
@@ -99,14 +96,11 @@ PA_LOG_MAX_HISTORY
 PA_LOG_TOTAL_SIZE_CAP
 ```
 
-历史文件名不包含 `%i`，因此不会因为同一天达到某个大小而生成 `.0`、`.1` 等分片。
-`maxHistory` 和 `totalSizeCap` 都不配置，Logback 不自动删除历史文件。日期模式只含
-`yyyy-MM-dd`，所以在有下一条日志事件时按自然日切换；`.gz` 后缀使已结束日期的日志
-自动压缩。
-
-当天始终向 `personnel-archive-service.log` 追加；跨日后将上一日归档成唯一的
-`personnel-archive-service.YYYY-MM-DD.log.gz`。同一天内服务重启继续追加活动文件，
-不会按进程启动次数额外创建日志。
+文件名不包含 `%i`，因此不会因为同一天达到某个大小而生成 `.0`、`.1` 等分片。
+`maxHistory` 和 `totalSizeCap` 都不配置，Logback 不自动删除历史文件。文件名不含
+`.gz`，所以不会压缩。日期模式只含 `yyyy-MM-dd`，当天直接写入
+`log.YYYY-MM-DD.log`；跨日后的下一条日志会直接写入新日期文件。同一天内服务重启
+继续追加同一个日期文件，不会按进程启动次数额外创建日志。
 
 ### 3.3 无限保留的已知后果
 
@@ -197,15 +191,17 @@ ConditionPathIsReadWrite=/data/personnel-archive-service/log
 ConditionPathExists=/data/personnel-archive-service/personnel-archive-service.jar
 ```
 
-数据库与安全配置继续通过：
+profile 与三项安全配置分别通过：
 
 ```text
 EnvironmentFile=/etc/personnel-archive-service/personnel-archive-service.env
-SPRING_PROFILES_ACTIVE=prod
+Environment=SPRING_PROFILES_ACTIVE=prod
 ```
 
-安装器的完整性校验、Java 21 检查、专用账号、无回显密码输入、本地密钥生成、
-`--reconfigure` 只替换数据库密码、systemd 启用和 18080 就绪检查保持不变。
+按用户后续明确指示，数据库 URL、账号和已提供密码固定写入 `application-prod.yml`；
+环境文件只保存目标机生成的 token pepper、身份 HMAC 密钥和 AES 密钥。安装器不再读取
+或改写数据库密码，也不存在数据库和日志的环境覆盖或重配参数。完整性校验、Java 21
+检查、专用账号、本地密钥生成、systemd 启用和 18080 就绪检查保持不变。
 安装日志改写到 `/data/personnel-archive-service/log`。安装器和文档中的旧 `/opt` 项目
 路径必须全部消失，但检查 Java 实际路径时允许结果位于 `/opt`。
 
@@ -240,7 +236,8 @@ sudo ./启动prod环境.sh
 9. 失败时显示不含环境内容的 systemd 状态、最近 journal 和文件日志末尾，再退出非零。
 
 脚本不保持实时日志窗口，不会因终端关闭而停止后台服务。需要持续查看时由操作者另行
-执行 `journalctl -fu personnel-archive-service.service` 或 `tail -F`。
+执行 `journalctl -fu personnel-archive-service.service`，或重新运行启动脚本查看当天
+`log.YYYY-MM-DD.log` 的 `tail -F` 命令。
 
 ## 8. 离线包与桌面交付
 
@@ -252,7 +249,7 @@ sudo ./启动prod环境.sh
 ├── install.sh
 ├── start-prod.sh
 ├── service/personnel-archive-service.service.template
-├── mysql/01-轮换应用密码并授权.sql
+├── mysql/01-确认应用账号授权.sql
 ├── docs/01-安装前检查.txt
 ├── docs/02-数据库授权.txt
 ├── docs/03-离线安装与验证.txt
@@ -266,14 +263,16 @@ sudo ./启动prod环境.sh
 `.tar.gz.sha256` 必须来自同一暂存目录，内部清单增加 `start-prod.sh`。桌面的中文启动
 脚本生成后另附自己的 `.sha256`，以便单文件传输后验证。
 
-最终 JAR 仍移除临时生产副本内的 `application-dev.yml`，不包含真实密码、环境文件、
-附件、人员数据、工作簿上传、照片或数据库转储。构建机不连接目标数据库。
+最终 JAR 仍移除临时生产副本内的 `application-dev.yml`。按用户明确要求，它包含固定的
+prod 数据库凭据；构建信息必须如实声明，但任何输出、文档或校验报告都不能显示具体值。
+离线包不包含目标环境文件、附件、人员数据、工作簿上传、照片或数据库转储。构建机不
+连接目标数据库。
 
 ## 9. 测试与验收
 
 实施遵循先失败测试、后最小实现：
 
-1. 生产日志配置测试断言存在每日 `%d{yyyy-MM-dd}.log.gz`，不存在 `%i`、
+1. 生产日志配置测试断言存在每日 `./log/log.%d{yyyy-MM-dd}.log`，不存在 `.gz`、`%i`、
    `max-file-size`、`max-history`、`total-size-cap` 及对应环境变量；
 2. Logback 配置测试断言 `prod` 使用 `TimeBasedRollingPolicy`，控制台和文件 appender
    同时启用，非 `prod` 不创建生产文件 appender；
@@ -281,7 +280,7 @@ sudo ./启动prod环境.sh
    手机号、搜索词、删除原因、文件名和异常消息哨兵断言不落日志；
 4. Flyway 日志测试覆盖空库、已是 V14、迁移成功和迁移异常，断言版本、数量、结果和
    耗时字段存在而 JDBC 凭据不存在；
-5. UOS 合约测试断言安装路径、systemd 单元、环境日志路径、磁盘检查全部使用 `/data`，
+5. UOS 合约测试断言安装路径、systemd 单元、工作目录和磁盘检查全部使用 `/data`，
    同时拒绝出现旧项目路径 `/opt/personnel-archive-service`；
 6. 启动脚本测试覆盖 shell 语法、root 保护、配置权限检查、旧单元拒绝、已运行幂等、
    启动成功、60 秒失败诊断以及不读取环境文件；
@@ -290,8 +289,9 @@ sudo ./启动prod环境.sh
 8. Java 21 下执行完整 `./mvnw verify`，Docker 可用时运行真实 MySQL 8.4
    Testcontainers 的 V1–V14 和业务流程；
 9. 从刚验证的 Maven JAR 制作新的防覆盖离线包，校验内部和外部 SHA-256；
-10. 检查最终 JAR 不含 `application-dev.yml`，扫描离线目录、压缩包和中文启动脚本，
-    确认不含附件旧密码、本地开发秘密或任何明文秘密赋值；
+10. 检查最终 JAR 不含 `application-dev.yml`，并以只输出布尔结果的方式确认 JAR 内
+    prod 密码与用户附件一致；扫描脚本、文档和中文启动脚本，确认未重复明文凭据、
+    本地开发秘密或生成后的三项安全密钥；
 11. 验证用户现有 `ExcelArchiveReader.java` 修改和已暂存
     `ExcelNumericDatePrecisionTest.java` 未被覆盖，并执行其对应测试；
 12. 更新服务 `AGENTS.md`、根 `AGENTS.md`、根 `CODE_GUIDE.md` 和全部 UOS 文档中的
@@ -301,7 +301,8 @@ sudo ./启动prod环境.sh
 
 - `/data/personnel-archive-service/personnel-archive-service.jar` 存在；
 - 文件日志持续写入 `/data/personnel-archive-service/log`；
-- 跨日后仅产生一个对应日期的 `.log.gz`，没有 `.0/.1` 大小分片；
+- 当天直接产生一个 `log.YYYY-MM-DD.log`，跨日后写入下一日期文件，没有压缩文件或
+  `.0/.1` 大小分片；
 - `systemctl is-active personnel-archive-service.service` 为 `active`；
 - 18080 端口监听，Flyway 最大成功版本为 14；
 - 以不含真实个人信息的测试档案完成登录、导入、查询、查看、导出、删除和退出冒烟；

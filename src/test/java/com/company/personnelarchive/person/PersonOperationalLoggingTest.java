@@ -39,7 +39,8 @@ class PersonOperationalLoggingTest {
             fixture.service.list(NAME, EMPLOYEE, DEPARTMENT, 1, 20, 9L);
 
             assertThat(logs.joined())
-                .contains("event=person_list_completed", "operatorId=9", "page=1", "size=20",
+                .contains("event=person_list_started", "operatorId=9", "page=1", "size=20",
+                    "event=person_list_completed",
                     "returnedCount=1", "total=21", "durationMs=");
             assertSensitiveDataRedacted(logs.joined());
         }
@@ -58,7 +59,8 @@ class PersonOperationalLoggingTest {
             fixture.service.detail(7L, 9L);
 
             assertThat(logs.joined())
-                .contains("event=person_detail_completed", "operatorId=9", "personId=7", "durationMs=");
+                .contains("event=person_detail_started", "operatorId=9", "personId=7",
+                    "event=person_detail_completed", "durationMs=");
             assertSensitiveDataRedacted(logs.joined());
         }
     }
@@ -76,7 +78,8 @@ class PersonOperationalLoggingTest {
             fixture.service.searchFamily(SEARCH, 0, 20);
 
             assertThat(logs.joined())
-                .contains("event=family_search_completed", "page=0", "size=20", "returnedCount=1",
+                .contains("event=family_search_started", "page=0", "size=20",
+                    "event=family_search_completed", "returnedCount=1",
                     "total=2", "durationMs=");
             assertSensitiveDataRedacted(logs.joined());
         }
@@ -93,7 +96,8 @@ class PersonOperationalLoggingTest {
             fixture.service.sensitiveValue(7L, PersonDtos.SensitiveField.PHONE_NUMBER, 9L);
 
             assertThat(logs.joined())
-                .contains("event=sensitive_value_completed", "operatorId=9", "personId=7",
+                .contains("event=sensitive_value_started", "operatorId=9", "personId=7",
+                    "event=sensitive_value_completed",
                     "field=IDENTITY_CARD", "field=PHONE_NUMBER", "durationMs=");
             assertSensitiveDataRedacted(logs.joined());
         }
@@ -113,8 +117,51 @@ class PersonOperationalLoggingTest {
             assertThatThrownBy(() -> fixture.service.photo(8L, 9L)).isInstanceOf(BusinessException.class);
 
             assertThat(logs.joined())
-                .contains("event=photo_completed", "operatorId=9", "personId=7", "byteCount=3", "durationMs=")
+                .contains("event=photo_started", "operatorId=9", "personId=7",
+                    "event=photo_completed", "byteCount=3", "event=photo_failed", "personId=8",
+                    "code=NOT_FOUND", "durationMs=")
                 .doesNotContain(PHOTO_NAME, "101", "102", "103");
+            assertSensitiveDataRedacted(logs.joined());
+        }
+    }
+
+    @Test
+    void logsKnownReadFailuresForEveryOperation() {
+        QueryFixture fixture = new QueryFixture();
+
+        try (var logs = LogCapture.attach(PersonQueryService.class)) {
+            assertThatThrownBy(() -> fixture.service.list(NAME, EMPLOYEE, DEPARTMENT, -1, 20, 9L))
+                .isInstanceOf(BusinessException.class);
+            assertThatThrownBy(() -> fixture.service.searchFamily(" ", 0, 20))
+                .isInstanceOf(BusinessException.class);
+            assertThatThrownBy(() -> fixture.service.detail(7L, 9L))
+                .isInstanceOf(BusinessException.class);
+            assertThatThrownBy(() -> fixture.service.sensitiveValue(
+                7L, PersonDtos.SensitiveField.IDENTITY_CARD, 9L)).isInstanceOf(BusinessException.class);
+
+            assertThat(logs.joined())
+                .contains("event=person_list_started", "event=person_list_failed", "code=VALIDATION_ERROR",
+                    "event=family_search_started", "event=family_search_failed",
+                    "event=person_detail_started", "event=person_detail_failed", "code=NOT_FOUND",
+                    "event=sensitive_value_started", "event=sensitive_value_failed", "durationMs=");
+            assertSensitiveDataRedacted(logs.joined());
+        }
+    }
+
+    @Test
+    void logsUnknownReadFailureWithoutItsMessage() {
+        QueryFixture fixture = new QueryFixture();
+        when(fixture.mapper.countActivePersons(1L, NAME, EMPLOYEE, DEPARTMENT))
+            .thenThrow(new IllegalStateException("query-message-secret-sentinel"));
+
+        try (var logs = LogCapture.attach(PersonQueryService.class)) {
+            assertThatThrownBy(() -> fixture.service.list(NAME, EMPLOYEE, DEPARTMENT, 0, 20, 9L))
+                .isInstanceOf(IllegalStateException.class);
+
+            assertThat(logs.joined())
+                .contains("event=person_list_started", "event=person_list_failed", "code=INTERNAL_ERROR",
+                    "exceptionType=java.lang.IllegalStateException", "durationMs=")
+                .doesNotContain("query-message-secret-sentinel");
             assertSensitiveDataRedacted(logs.joined());
         }
     }

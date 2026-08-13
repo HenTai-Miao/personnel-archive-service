@@ -1,5 +1,12 @@
 # 统信 UOS 离线生产部署包与安全运行日志设计
 
+> **已被后续确认方案取代：** 最终实现以
+> `2026-08-13-data-directory-daily-logging-and-prod-launcher-design.md` 为准：安装到
+> `/data/personnel-archive-service`，每天直接写入不压缩的纯文本
+> `log.YYYY-MM-DD.log`，不限制保留/总量；prod 数据库连接按用户后续明确指示固定写入
+> 生产配置，并另外交付 `启动prod环境.sh`。本文件后续的 `/opt`、压缩日志、大小上限和
+> 环境变量内容仅保留为已废弃历史方案，不得用于构建或部署。
+
 **日期：** 2026-08-13
 **状态：** 用户已完成书面复核；实施中
 **目标分支：** `chore/prod-mysql-only`

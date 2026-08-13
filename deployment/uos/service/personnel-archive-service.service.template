@@ -1,19 +1,19 @@
 [Unit]
 Description=人员档案数据服务
-Documentation=file:/opt/personnel-archive-service/log/
+Documentation=file:/data/personnel-archive-service/log/
 Wants=network-online.target
 After=network-online.target mysql.service mysqld.service
-ConditionPathIsReadWrite=/opt/personnel-archive-service/log
-ConditionPathExists=/opt/personnel-archive-service/personnel-archive-service.jar
-ConditionPathExists=/etc/personnel-archive-service/personnel-archive-service.env
+ConditionPathIsReadWrite=/data/personnel-archive-service/log
+ConditionPathExists=/data/personnel-archive-service/personnel-archive-service.jar
 
 [Service]
 Type=simple
 User=personnel-archive
 Group=personnel-archive
-WorkingDirectory=/opt/personnel-archive-service
-EnvironmentFile=/etc/personnel-archive-service/personnel-archive-service.env
-ExecStart=@JAVA_BIN@ -jar /opt/personnel-archive-service/personnel-archive-service.jar
+WorkingDirectory=/data/personnel-archive-service
+Environment=SPRING_PROFILES_ACTIVE=prod
+Environment=JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Shanghai
+ExecStart=@JAVA_BIN@ -jar /data/personnel-archive-service/personnel-archive-service.jar
 SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5s
@@ -32,7 +32,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 CapabilityBoundingSet=
-ReadWritePaths=/opt/personnel-archive-service/log
+ReadWritePaths=/data/personnel-archive-service/log
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=personnel-archive-service

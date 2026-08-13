@@ -36,47 +36,58 @@ public class ImportBatchService {
         }
         long started = OperationalLog.started();
         ImportMapper.BatchInsert batch = new ImportMapper.BatchInsert();
-        batch.tenantId = properties.tenantId(); batch.totalCount = files.size(); batch.operatorId = operatorId;
-        mapper.insertBatch(batch);
-        log.info("event=import_batch_started operatorId={} batchId={} fileCount={}",
-            operatorId, batch.id, files.size());
-        List<ImportDtos.ItemResult> results = new ArrayList<>();
-        // 不在本方法开启共享事务；ImportItemService 使用 REQUIRES_NEW 建立逐文件原子边界。
-        for (int index = 0; index < files.size(); index++) {
-            long itemStarted = OperationalLog.started();
-            MultipartFile file = files.get(index);
-            byte[] bytes = new byte[0];
-            try {
-                bytes = read(file);
-                results.add(items.precheck(batch.id, index + 1, file.getOriginalFilename(), bytes, operatorId));
-            } catch (BusinessException exception) {
-                log.warn("event=import_item_failed batchId={} itemOrder={} code={} durationMs={}",
-                    batch.id, index + 1, exception.code().name(), OperationalLog.elapsedMillis(itemStarted));
-                results.add(items.recordFailure(batch.id, index + 1, file == null ? null : file.getOriginalFilename(), bytes,
-                    exception.code(), exception.getMessage(), operatorId));
-            } catch (DataIntegrityViolationException exception) {
-                log.warn("event=import_item_failed batchId={} itemOrder={} code={} durationMs={}",
-                    batch.id, index + 1, ErrorCode.CONCURRENT_ARCHIVE_CONFLICT.name(),
-                    OperationalLog.elapsedMillis(itemStarted));
-                results.add(items.recordFailure(batch.id, index + 1, file == null ? null : file.getOriginalFilename(), bytes,
-                    ErrorCode.CONCURRENT_ARCHIVE_CONFLICT, ErrorCode.CONCURRENT_ARCHIVE_CONFLICT.message(), operatorId));
-            } catch (RuntimeException exception) {
-                // 未知异常仅返回稳定安全错误码，不把堆栈或工作簿内容暴露给客户端。
-                log.error("event=import_item_failed batchId={} itemOrder={} code={} durationMs={} {}",
-                    batch.id, index + 1, ErrorCode.INTERNAL_ERROR.name(), OperationalLog.elapsedMillis(itemStarted),
-                    SafeExceptionSummary.describe(exception));
-                results.add(items.recordFailure(batch.id, index + 1, file == null ? null : file.getOriginalFilename(), bytes,
-                    ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.message(), operatorId));
+        try {
+            batch.tenantId = properties.tenantId(); batch.totalCount = files.size(); batch.operatorId = operatorId;
+            mapper.insertBatch(batch);
+            log.info("event=import_batch_started operatorId={} batchId={} fileCount={}",
+                operatorId, batch.id, files.size());
+            List<ImportDtos.ItemResult> results = new ArrayList<>();
+            // 不在本方法开启共享事务；ImportItemService 使用 REQUIRES_NEW 建立逐文件原子边界。
+            for (int index = 0; index < files.size(); index++) {
+                long itemStarted = OperationalLog.started();
+                MultipartFile file = files.get(index);
+                byte[] bytes = new byte[0];
+                try {
+                    bytes = read(file);
+                    results.add(items.precheck(batch.id, index + 1, file.getOriginalFilename(), bytes, operatorId));
+                } catch (BusinessException exception) {
+                    log.warn("event=import_item_failed batchId={} itemOrder={} code={} durationMs={}",
+                        batch.id, index + 1, exception.code().name(), OperationalLog.elapsedMillis(itemStarted));
+                    results.add(items.recordFailure(batch.id, index + 1, file == null ? null : file.getOriginalFilename(), bytes,
+                        exception.code(), exception.getMessage(), operatorId));
+                } catch (DataIntegrityViolationException exception) {
+                    log.warn("event=import_item_failed batchId={} itemOrder={} code={} durationMs={}",
+                        batch.id, index + 1, ErrorCode.CONCURRENT_ARCHIVE_CONFLICT.name(),
+                        OperationalLog.elapsedMillis(itemStarted));
+                    results.add(items.recordFailure(batch.id, index + 1, file == null ? null : file.getOriginalFilename(), bytes,
+                        ErrorCode.CONCURRENT_ARCHIVE_CONFLICT, ErrorCode.CONCURRENT_ARCHIVE_CONFLICT.message(), operatorId));
+                } catch (RuntimeException exception) {
+                    // 未知异常仅返回稳定安全错误码，不把堆栈或工作簿内容暴露给客户端。
+                    log.error("event=import_item_failed batchId={} itemOrder={} code={} durationMs={} {}",
+                        batch.id, index + 1, ErrorCode.INTERNAL_ERROR.name(), OperationalLog.elapsedMillis(itemStarted),
+                        SafeExceptionSummary.describe(exception));
+                    results.add(items.recordFailure(batch.id, index + 1, file == null ? null : file.getOriginalFilename(), bytes,
+                        ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.message(), operatorId));
+                }
             }
+            mapper.refreshBatch(batch.id);
+            ImportDtos.BatchResponse response = response(batch.id, results);
+            log.info("event=import_batch_completed operatorId={} batchId={} fileCount={} importedCount={} "
+                    + "pendingCount={} failedCount={} skippedCount={} overwrittenCount={} durationMs={}",
+                operatorId, batch.id, files.size(), count(results, "IMPORTED"), count(results, "PENDING_DECISION"),
+                count(results, "FAILED"), count(results, "SKIPPED"), count(results, "OVERWRITTEN"),
+                OperationalLog.elapsedMillis(started));
+            return response;
+        } catch (BusinessException exception) {
+            log.warn("event=import_batch_failed operatorId={} batchId={} fileCount={} code={} durationMs={}",
+                operatorId, batchId(batch), files.size(), exception.code().name(), OperationalLog.elapsedMillis(started));
+            throw exception;
+        } catch (RuntimeException exception) {
+            log.error("event=import_batch_failed operatorId={} batchId={} fileCount={} code={} durationMs={} {}",
+                operatorId, batchId(batch), files.size(), ErrorCode.INTERNAL_ERROR.name(),
+                OperationalLog.elapsedMillis(started), SafeExceptionSummary.describe(exception));
+            throw exception;
         }
-        mapper.refreshBatch(batch.id);
-        ImportDtos.BatchResponse response = response(batch.id, results);
-        log.info("event=import_batch_completed operatorId={} batchId={} fileCount={} importedCount={} "
-                + "pendingCount={} failedCount={} skippedCount={} overwrittenCount={} durationMs={}",
-            operatorId, batch.id, files.size(), count(results, "IMPORTED"), count(results, "PENDING_DECISION"),
-            count(results, "FAILED"), count(results, "SKIPPED"), count(results, "OVERWRITTEN"),
-            OperationalLog.elapsedMillis(started));
-        return response;
     }
 
     public ImportDtos.ItemResult decide(long itemId, String decision, long operatorId) {
@@ -93,6 +104,10 @@ public class ImportBatchService {
 
     private static long count(List<ImportDtos.ItemResult> results, String status) {
         return results.stream().filter(item -> status.equals(item.status())).count();
+    }
+
+    private static String batchId(ImportMapper.BatchInsert batch) {
+        return batch.id == null ? "none" : Long.toString(batch.id);
     }
 
     private static String decisionCode(String decision) {
