@@ -3,10 +3,13 @@ package com.company.personnelarchive.archiveimport;
 import com.company.personnelarchive.audit.AuditService;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
+import com.company.personnelarchive.common.OperationalLog;
 import com.company.personnelarchive.configuration.ArchiveProperties;
 import com.company.personnelarchive.person.NameNormalizer;
 import com.company.personnelarchive.person.PersonMapper;
 import com.company.personnelarchive.person.SnapshotWriter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +29,7 @@ import java.util.Arrays;
  * 再原子地软删除旧根、插入新快照并链接历史，绝不原地修改旧快照。</p>
  */
 public class ImportItemService {
+    private static final Logger log = LoggerFactory.getLogger(ImportItemService.class);
     private final ImportMapper importMapper;
     private final PersonMapper personMapper;
     private final SnapshotWriter writer;
@@ -45,10 +49,16 @@ public class ImportItemService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ImportDtos.ItemResult precheck(long batchId, int order, String filename, byte[] file, long operatorId) {
+        long started = OperationalLog.started();
+        log.info("event=import_item_started batchId={} itemOrder={} fileSize={}", batchId, order, file.length);
         // 每个文件使用新事务，使批量中的解析、约束或数据库失败互不影响。
         String safeFilename = ImportFilename.safe(filename);
         byte[] fileHash = sha256(file);
         ArchiveDocument document = excelReader.read(new ByteArrayInputStream(file), file.length, safeFilename);
+        log.info("event=import_item_parsed batchId={} itemOrder={} mainEducationCount={} workCount={} "
+                + "rewardCount={} familyCount={} durationMs={}",
+            batchId, order, size(document.mainEducation()), size(document.workExperiences()),
+            size(document.rewardsPunishments()), size(document.familyMembers()), OperationalLog.elapsedMillis(started));
         SnapshotWriter.PreparedArchive prepared = writer.prepare(document);
         PersonMapper.ActivePerson identityMatch = prepared.identityHmac() == null ? null
             : personMapper.findActiveByIdentity(properties.tenantId(), prepared.identityHmac());
@@ -61,7 +71,7 @@ public class ImportItemService {
             PersonMapper.ActivePerson employeeMatch = findEmployeeMatch(prepared.employeeNo());
             if (employeeMatch != null && employeeMatch.id() != identityMatch.id()) throw new BusinessException(ErrorCode.EMPLOYEE_NO_CONFLICT);
             return pending(batchId, order, safeFilename, file, fileHash, document, prepared.employeeNo(), identityMatch,
-                operatorId);
+                operatorId, started);
         }
         PersonMapper.ActivePerson employeeMatch = findEmployeeMatch(prepared.employeeNo());
         if (employeeMatch != null) throw new BusinessException(ErrorCode.EMPLOYEE_NO_CONFLICT);
@@ -70,67 +80,96 @@ public class ImportItemService {
         item.status = "IMPORTED"; item.resultCode = "IMPORTED"; item.message = "导入成功"; item.importedPersonId = personId;
         importMapper.insertItem(item);
         audit.recordImport(operatorId, "IMPORT", personId, batchId, item.id, "IMPORTED", true);
+        completedItem(batchId, order, item.id, personId, "IMPORTED", started);
         return new ImportDtos.ItemResult(item.id, item.filename, item.status, item.resultCode, item.message, null);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ImportDtos.ItemResult recordFailure(long batchId, int order, String filename, byte[] file,
                                                 ErrorCode code, String safeMessage, long operatorId) {
+        long started = OperationalLog.started();
         ImportMapper.ItemInsert item = base(batchId, order, filename, file, sha256(file));
         item.status = "FAILED"; item.resultCode = code.name(); item.message = safeMessage;
         importMapper.insertItem(item);
         audit.recordImport(operatorId, "IMPORT", null, batchId, item.id, code.name(), false);
+        OperationalLog.afterCommit(() -> log.info(
+            "event=import_item_completed batchId={} itemOrder={} itemId={} personId=none result=FAILED "
+                + "code={} durationMs={}",
+            batchId, order, item.id, code.name(), OperationalLog.elapsedMillis(started)));
         return new ImportDtos.ItemResult(item.id, item.filename, item.status, item.resultCode, item.message, null);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ImportDtos.ItemResult decide(long itemId, String decision, long operatorId) {
-        if (!"OVERWRITE".equals(decision) && !"SKIP".equals(decision)) throw new BusinessException(ErrorCode.INVALID_IMPORT_DECISION);
-        // 锁住导入条目，防止两个客户端同时对同一个待决定项执行不同操作。
-        ImportMapper.DecisionRow item = importMapper.lockDecision(properties.tenantId(), itemId);
-        if (item == null || !"PENDING_DECISION".equals(item.itemStatus()) || !item.decisionExpiresAt().isAfter(clock.instant())) {
-            throw new BusinessException(ErrorCode.STALE_IMPORT_DECISION);
-        }
-        if ("SKIP".equals(decision)) {
-            // SKIP 只完成导入审计条目，不触碰任何人员档案表。
+        long started = OperationalLog.started();
+        String safeDecision = decisionCode(decision);
+        log.info("event=import_decision_started itemId={} operatorId={} decision={}",
+            itemId, operatorId, safeDecision);
+        try {
+            if (!"OVERWRITE".equals(decision) && !"SKIP".equals(decision)) {
+                throw new BusinessException(ErrorCode.INVALID_IMPORT_DECISION);
+            }
+            // 锁住导入条目，防止两个客户端同时对同一个待决定项执行不同操作。
+            ImportMapper.DecisionRow item = importMapper.lockDecision(properties.tenantId(), itemId);
+            if (item == null || !"PENDING_DECISION".equals(item.itemStatus())
+                    || !item.decisionExpiresAt().isAfter(clock.instant())) {
+                throw new BusinessException(ErrorCode.STALE_IMPORT_DECISION);
+            }
+            if ("SKIP".equals(decision)) {
+                // SKIP 只完成导入审计条目，不触碰任何人员档案表。
+                discardAfterCommit(itemId);
+                importMapper.completeDecision(itemId, "SKIPPED", "SKIPPED", "已跳过，档案未变更", null, decision,
+                    operatorId);
+                audit.recordImport(operatorId, "SKIP", item.matchedPersonId(), item.batchId(), item.id(), "SKIPPED",
+                    true);
+                importMapper.refreshBatch(item.batchId());
+                completedDecision(itemId, operatorId, safeDecision, item.matchedPersonId(), "SKIPPED", started);
+                return new ImportDtos.ItemResult(itemId, item.originalFilename(), "SKIPPED", "SKIPPED",
+                    "已跳过，档案未变更", null);
+            }
+            // 待决定存储只有解析后的领域文档，没有原始 XLSX；进程重启或过期后要求重新预检。
+            PendingImportStore.Entry pending = pendingStore.get(itemId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.STALE_IMPORT_DECISION));
+            SnapshotWriter.PreparedArchive prepared = writer.prepare(pending.document());
+            // 决定可能晚于预检几十分钟，因此必须锁定当前有效快照并重新校验版本、姓名和身份。
+            PersonMapper.ActivePerson active = personMapper.lockActiveById(properties.tenantId(), item.matchedPersonId());
+            if (active == null || active.snapshotVersion() != item.matchedSnapshotVersion()
+                || pending.matchedPersonId() != item.matchedPersonId()
+                || pending.matchedSnapshotVersion() != item.matchedSnapshotVersion()
+                || !active.normalizedName().equals(prepared.normalizedName())
+                || !Arrays.equals(active.idCardHmac(), prepared.identityHmac())) {
+                throw new BusinessException(ErrorCode.STALE_IMPORT_DECISION);
+            }
+            PersonMapper.ActivePerson employeeMatch = findEmployeeMatch(prepared.employeeNo());
+            if (employeeMatch != null && employeeMatch.id() != active.id()) {
+                throw new BusinessException(ErrorCode.EMPLOYEE_NO_CONFLICT);
+            }
+            // 软删除、新快照、历史链接同属当前事务，任一步失败都会整体回滚。
+            if (personMapper.softDeleteForOverwrite(active.id(), active.snapshotVersion(), operatorId) != 1) {
+                throw new BusinessException(ErrorCode.STALE_IMPORT_DECISION);
+            }
+            long newPersonId = writer.insert(prepared, operatorId, active.snapshotVersion() + 1, active.id());
+            if (personMapper.linkReplacement(active.id(), newPersonId, operatorId) != 1) {
+                throw new BusinessException(ErrorCode.STALE_IMPORT_DECISION);
+            }
+            importMapper.completeDecision(itemId, "OVERWRITTEN", "OVERWRITTEN", "已创建新快照并保留历史版本",
+                newPersonId, decision, operatorId);
             discardAfterCommit(itemId);
-            importMapper.completeDecision(itemId, "SKIPPED", "SKIPPED", "已跳过，档案未变更", null, decision, operatorId);
-            audit.recordImport(operatorId, "SKIP", item.matchedPersonId(), item.batchId(), item.id(), "SKIPPED", true);
+            audit.recordOverwrite(operatorId, active.id(), newPersonId, item.batchId(), item.id());
             importMapper.refreshBatch(item.batchId());
-            return new ImportDtos.ItemResult(itemId, item.originalFilename(), "SKIPPED", "SKIPPED", "已跳过，档案未变更", null);
+            completedDecision(itemId, operatorId, safeDecision, newPersonId, "OVERWRITTEN", started);
+            return new ImportDtos.ItemResult(itemId, item.originalFilename(), "OVERWRITTEN", "OVERWRITTEN",
+                "已创建新快照并保留历史版本", null);
+        } catch (BusinessException exception) {
+            log.warn("event=import_decision_failed itemId={} operatorId={} decision={} code={} durationMs={}",
+                itemId, operatorId, safeDecision, exception.code().name(), OperationalLog.elapsedMillis(started));
+            throw exception;
         }
-        // 待决定存储只有解析后的领域文档，没有原始 XLSX；进程重启或过期后要求重新预检。
-        PendingImportStore.Entry pending = pendingStore.get(itemId).orElseThrow(() -> new BusinessException(ErrorCode.STALE_IMPORT_DECISION));
-        SnapshotWriter.PreparedArchive prepared = writer.prepare(pending.document());
-        // 决定可能晚于预检几十分钟，因此必须锁定当前有效快照并重新校验版本、姓名和身份。
-        PersonMapper.ActivePerson active = personMapper.lockActiveById(properties.tenantId(), item.matchedPersonId());
-        if (active == null || active.snapshotVersion() != item.matchedSnapshotVersion()
-            || pending.matchedPersonId() != item.matchedPersonId() || pending.matchedSnapshotVersion() != item.matchedSnapshotVersion()
-            || !active.normalizedName().equals(prepared.normalizedName())
-            || !Arrays.equals(active.idCardHmac(), prepared.identityHmac())) {
-            throw new BusinessException(ErrorCode.STALE_IMPORT_DECISION);
-        }
-        PersonMapper.ActivePerson employeeMatch = findEmployeeMatch(prepared.employeeNo());
-        if (employeeMatch != null && employeeMatch.id() != active.id()) throw new BusinessException(ErrorCode.EMPLOYEE_NO_CONFLICT);
-        // 软删除、新快照、历史链接同属当前事务，任一步失败都会整体回滚。
-        if (personMapper.softDeleteForOverwrite(active.id(), active.snapshotVersion(), operatorId) != 1) {
-            throw new BusinessException(ErrorCode.STALE_IMPORT_DECISION);
-        }
-        long newPersonId = writer.insert(prepared, operatorId, active.snapshotVersion() + 1, active.id());
-        if (personMapper.linkReplacement(active.id(), newPersonId, operatorId) != 1) {
-            throw new BusinessException(ErrorCode.STALE_IMPORT_DECISION);
-        }
-        importMapper.completeDecision(itemId, "OVERWRITTEN", "OVERWRITTEN", "已创建新快照并保留历史版本", newPersonId, decision, operatorId);
-        discardAfterCommit(itemId);
-        audit.recordOverwrite(operatorId, active.id(), newPersonId, item.batchId(), item.id());
-        importMapper.refreshBatch(item.batchId());
-        return new ImportDtos.ItemResult(itemId, item.originalFilename(), "OVERWRITTEN", "OVERWRITTEN",
-            "已创建新快照并保留历史版本", null);
     }
 
     private ImportDtos.ItemResult pending(long batchId, int order, String filename, byte[] file, byte[] fileHash,
                                           ArchiveDocument document, String incomingEmployeeNo, PersonMapper.ActivePerson match,
-                                          long operatorId) {
+                                          long operatorId, long started) {
         Instant expiresAt = clock.instant().plusSeconds(30 * 60);
         ImportMapper.ItemInsert item = base(batchId, order, filename, file, fileHash);
         item.status = "PENDING_DECISION"; item.resultCode = ErrorCode.DUPLICATE_REQUIRES_DECISION.name();
@@ -142,6 +181,7 @@ public class ImportItemService {
         pendingStore.put(item.id, document, match.id(), match.snapshotVersion(), expiresAt);
         audit.recordImport(operatorId, "IMPORT", match.id(), batchId, item.id,
             ErrorCode.DUPLICATE_REQUIRES_DECISION.name(), true);
+        completedItem(batchId, order, item.id, match.id(), "PENDING_DECISION", started);
         var duplicate = new ImportDtos.DuplicateSummary(match.personName(), match.idCardLastFour(), match.employeeNo(),
             incomingEmployeeNo, match.updatedAt().toString());
         return new ImportDtos.ItemResult(item.id, item.filename, item.status, item.resultCode, item.message, duplicate);
@@ -158,6 +198,27 @@ public class ImportItemService {
     private PersonMapper.ActivePerson findEmployeeMatch(String employeeNo) {
         return employeeNo.isBlank() ? null
             : personMapper.findActiveByEmployeeNo(properties.tenantId(), employeeNo);
+    }
+
+    private void completedItem(long batchId, int order, long itemId, long personId, String result, long started) {
+        OperationalLog.afterCommit(() -> log.info(
+            "event=import_item_completed batchId={} itemOrder={} itemId={} personId={} result={} durationMs={}",
+            batchId, order, itemId, personId, result, OperationalLog.elapsedMillis(started)));
+    }
+
+    private void completedDecision(long itemId, long operatorId, String decision, Long personId, String result,
+                                   long started) {
+        OperationalLog.afterCommit(() -> log.info(
+            "event=import_decision_completed itemId={} operatorId={} decision={} personId={} result={} durationMs={}",
+            itemId, operatorId, decision, personId, result, OperationalLog.elapsedMillis(started)));
+    }
+
+    private static int size(java.util.List<?> values) {
+        return values == null ? 0 : values.size();
+    }
+
+    private static String decisionCode(String decision) {
+        return "OVERWRITE".equals(decision) || "SKIP".equals(decision) ? decision : "INVALID";
     }
 
     private static byte[] sha256(byte[] bytes) {

@@ -4,11 +4,15 @@ package com.company.personnelarchive.archiveimport;
 import com.company.personnelarchive.audit.AuditService;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
+import com.company.personnelarchive.common.OperationalLog;
 import com.company.personnelarchive.configuration.ArchiveProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ImportHistoryService {
+    private static final Logger log = LoggerFactory.getLogger(ImportHistoryService.class);
     private final ImportMapper mapper;
     private final ArchiveProperties properties;
     private final AuditService audit;
@@ -20,6 +24,7 @@ public class ImportHistoryService {
     }
 
     public ImportDtos.HistoryPage history(int page, int size, long operatorId) {
+        long started = OperationalLog.started();
         if (page < 0 || size < 1 || size > 100) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "分页参数不正确");
         }
@@ -31,6 +36,8 @@ public class ImportHistoryService {
             .toList();
         int totalPages = (int) Math.ceil((double) total / size);
         audit.record(operatorId, "VIEW", "IMPORT_HISTORY", null, "SUCCESS", true);
+        log.info("event=import_history_completed operatorId={} page={} size={} returnedCount={} total={} durationMs={}",
+            operatorId, page, size, content.size(), total, OperationalLog.elapsedMillis(started));
         return new ImportDtos.HistoryPage(content, page, size, total, totalPages);
     }
 }
