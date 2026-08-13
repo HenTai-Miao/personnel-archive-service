@@ -1,6 +1,6 @@
 # 人员档案数据服务
 
-技术项目名为 `personnel-archive-service`。Java 21 / Spring Boot 4 模块化单体，支持 MySQL 与 KingbaseES V9，Flyway 是唯一数据库结构变更入口。`application.yml` 保存公共配置并默认启用 `dev`；`application-dev.yml` 使用 MySQL，`application-prod.yml` 使用 KingbaseES。
+技术项目名为 `personnel-archive-service`。Java 21 / Spring Boot 4 模块化单体仅使用 MySQL，Flyway 是唯一数据库结构变更入口。`application.yml` 保存公共配置并默认启用 `dev`；`application-dev.yml` 和 `application-prod.yml` 都使用 MySQL V1–V14 迁移路径。
 
 Excel 业务字段均可留空；仅对已填写的身份证执行格式与加密保护，并只在非空姓名和非空身份证同时命中同一有效档案时要求覆盖或跳过。
 
@@ -27,12 +27,12 @@ Flyway V8 会为默认租户创建一个启用的 `ADMIN` 登录：账号 `hr_62
 
 macOS 本机联调可在仓库根目录双击 `启动本地测试.command`，它只会在需要时启动已有 MySQL 容器，并以 `dev` profile 运行服务；不会创建或重建数据库卷。
 
-## 生产 KingbaseES
+## 生产 MySQL
 
-`prod` profile 默认监听 `18080`，应用数据源是 `jdbc:kingbase8://10.141.29.96:54321/personnel_archive`。Flyway 按 KingbaseES 官方兼容方式使用独立的 PostgreSQL 协议 URL `jdbc:postgresql://10.141.29.96:54321/personnel_archive`，但两条 URL 指向同一 KingbaseES 数据库。
+`prod` profile 默认监听 `18080`，使用 MySQL Connector/J 和 `classpath:db/migration`。默认数据源指向同机 `127.0.0.1:3306/personnel_archive`；远程或不同端口的生产数据库必须通过 `PA_DB_URL` 覆盖完整 JDBC URL，并保留 `connectionTimeZone=Asia/Shanghai`。
 
-部署前由 DBA 创建空数据库 `personnel_archive`、账号并授予该 schema 建表及运行所需的最小权限。Flyway 建立 V8 最终结构、初始角色和默认管理员，不创建数据库本身，也不迁移已有 MySQL 数据。仓库不再提供外置 `config/`；生产数据库凭据和三项安全密钥必须通过部署环境或秘密管理系统注入。
+生产首次启动前至少配置 `SPRING_PROFILES_ACTIVE=prod`、`PA_DB_USERNAME`、`PA_DB_PASSWORD` 和三项安全密钥。Flyway 使用同一应用数据源执行 MySQL V1–V14，不再使用独立的 Flyway URL。部署前由 DBA 创建数据库 `personnel_archive`、账号并授予最小权限；Flyway 不创建数据库本身，也不迁移其他数据库产品中的数据。
 
-生产首次启动前至少配置 `SPRING_PROFILES_ACTIVE=prod`、`PA_DB_USERNAME`、`PA_DB_PASSWORD` 和三项安全密钥。`PA_DB_URL` 与 `PA_FLYWAY_DB_URL` 可覆盖默认服务器地址。部署后须在 KingbaseES 空库实际验收迁移、默认管理员登录、导入、覆盖、查询、软删除和 XLSX/ZIP 导出；本仓库的离线测试不会连接本地或生产 KingbaseES。
+部署后须在目标 MySQL 验收迁移、默认管理员登录、导入、覆盖、查询、软删除和 XLSX/ZIP 导出。生产凭据和三项安全密钥只能通过部署环境或秘密管理系统注入。仓库不提供外置 `config/`，也不保存任何生产秘密。
 
 生产 Excel 模板路径固定为 `classpath:/excel/personnel-archive-template-v1.xlsx`；参考空表中的失效命名范围不会被使用。
