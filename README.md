@@ -36,3 +36,25 @@ macOS 本机联调可在仓库根目录双击 `启动本地测试.command`，它
 部署后须在目标 MySQL 验收迁移、默认管理员登录、导入、覆盖、查询、软删除和 XLSX/ZIP 导出。生产凭据和三项安全密钥只能通过部署环境或秘密管理系统注入。仓库不提供外置 `config/`，也不保存任何生产秘密。
 
 生产 Excel 模板路径固定为 `classpath:/excel/personnel-archive-template-v1.xlsx`；参考空表中的失效命名范围不会被使用。
+
+## 生产运行日志
+
+`prod` 默认同时保留控制台日志和文件日志。文件默认写入进程工作目录下的
+`./log/personnel-archive-service.log`；历史文件按日期和序号轮转并压缩为 `.gz`，单个文件最大
+20 MB，保留最近 30 个周期，历史文件总量最多 1 GB。可通过以下环境变量覆盖位置：
+
+```bash
+PA_LOG_FILE=./log/personnel-archive-service.log
+PA_LOG_ARCHIVE_PATTERN=./log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz
+```
+
+标准 systemd 安装路径下可分别查看文件日志和控制台日志：
+
+```bash
+tail -F /opt/personnel-archive-service/log/personnel-archive-service.log
+journalctl -u personnel-archive-service -f
+```
+
+服务端为每个 HTTP 请求生成自己的 `X-Request-Id`，响应头、错误响应、通用请求完成日志和同一请求内的数据库审计记录使用同一个编号。可以按编号检索一次请求的认证、导入、查询、敏感字段/照片查看、删除及导出检查点。客户端提供的请求编号不会被信任。
+
+文件日志用于故障诊断，`sys_operation_log` 中的数据库审计记录仍是合规审计的权威来源。运行日志只记录内部 ID、数量、固定结果码、字节数、耗时、异常类型和受限代码位置；不得记录密码、令牌、数据库秘密、用户名、姓名、身份证、电话、地址、健康数据、搜索词、删除原因、工作簿文件名/路径/哈希/单元格内容、照片内容、请求正文、查询字符串或请求头。生产环境不得开启 SQL 参数、请求正文或 MyBatis/JDBC DEBUG 日志。
