@@ -23,12 +23,14 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiError> handleBusiness(BusinessException exception) {
+        log.warn("event=request_business_rejected code={}", exception.code().name());
         return ResponseEntity.status(exception.code().status())
             .body(ApiError.of(exception.code(), exception.getMessage()));
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, ConstraintViolationException.class})
     ResponseEntity<ApiError> handleValidation(Exception exception) {
+        log.warn("event=request_validation_rejected category=bean_validation");
         Map<String, String> details = new LinkedHashMap<>();
         if (exception instanceof MethodArgumentNotValidException invalid) {
             invalid.getBindingResult().getFieldErrors().forEach(error ->
@@ -40,26 +42,29 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MissingServletRequestPartException.class, MultipartException.class})
     ResponseEntity<ApiError> handleMalformedRequest(Exception exception) {
+        log.warn("event=request_validation_rejected category=malformed_request");
         return ResponseEntity.badRequest().body(ApiError.of(ErrorCode.VALIDATION_ERROR, ErrorCode.VALIDATION_ERROR.message()));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     ResponseEntity<ApiError> handleUploadTooLarge() {
+        log.warn("event=request_validation_rejected category=upload_too_large");
         return ResponseEntity.status(ErrorCode.FILE_TOO_LARGE.status())
             .body(ApiError.of(ErrorCode.FILE_TOO_LARGE, ErrorCode.FILE_TOO_LARGE.message()));
     }
 
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiError> handleForbidden() {
+        log.warn("event=request_validation_rejected category=forbidden");
         return ResponseEntity.status(ErrorCode.FORBIDDEN.status())
             .body(ApiError.of(ErrorCode.FORBIDDEN, ErrorCode.FORBIDDEN.message()));
     }
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiError> handleUnexpected(Exception exception) {
-        String requestId = java.util.UUID.randomUUID().toString();
-        log.error("Unhandled request failure, requestId={}, exceptionType={}", requestId, exception.getClass().getName());
+        String requestId = RequestCorrelation.currentIdOrNew();
+        log.error("event=request_failed requestId={} {}", requestId, SafeExceptionSummary.describe(exception));
         return ResponseEntity.status(ErrorCode.INTERNAL_ERROR.status())
-            .body(ApiError.of(ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.message()));
+            .body(ApiError.withRequestId(ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.message(), requestId));
     }
 }

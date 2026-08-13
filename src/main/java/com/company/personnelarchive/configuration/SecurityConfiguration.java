@@ -74,6 +74,7 @@ public class SecurityConfiguration {
         response.setStatus(code.status().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        mapper.writeValue(response.getOutputStream(), ApiError.of(code, code.message()));
+        mapper.writeValue(response.getOutputStream(), ApiError.withRequestId(
+            code, code.message(), RequestCorrelation.currentIdOrNew()));
     }
 }

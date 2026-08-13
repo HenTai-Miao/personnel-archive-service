@@ -105,5 +105,12 @@ class ApiContractSerializationTest {
         assertThat(json.get("timestamp").asText()).endsWith("Z");
         assertThat(json.has("details")).isFalse();
         assertThat(json).hasSize(3);
+
+        var internal = mapper.readTree(mapper.writeValueAsBytes(ApiError.withRequestId(
+            ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.message(),
+            "4eb52f0a-ec4c-427f-aa14-482238308eb5")));
+        assertThat(internal).hasSize(4);
+        assertThat(internal.at("/details/requestId").asText())
+            .isEqualTo("4eb52f0a-ec4c-427f-aa14-482238308eb5");
     }
 }
