@@ -389,7 +389,7 @@ Do not attempt to stage the two root files; they are outside this Git repository
 
 ---
 
-### Task 4: Verify, review, push, and report
+### Task 4: Clean-verify, review, push, and report
 
 **Files:**
 
@@ -412,13 +412,13 @@ git diff --name-status origin/dev-yx-20260724...HEAD
 
 Expected: no whitespace errors; only the design/plan, production configuration, database dependencies/assets/tests, README, and service `AGENTS.md` are changed.
 
-- [ ] **Step 2: Run the full Java 21 verification suite**
+- [ ] **Step 2: Run the full Java 21 verification suite from a clean build directory**
 
 ```bash
-env JAVA_HOME=/Users/zhongerbing/.sdkman/candidates/java/21.0.11-oracle ./mvnw verify
+env JAVA_HOME=/Users/zhongerbing/.sdkman/candidates/java/21.0.11-oracle ./mvnw clean verify
 ```
 
-Expected: BUILD SUCCESS, zero failures and zero errors. If Docker remains unavailable, disclose every skipped Testcontainers test and do not claim real MySQL migration execution.
+Expected: BUILD SUCCESS, zero failures and zero errors. `clean` is required because removed source/resource files must not survive from an earlier `target/classes`. If Docker remains unavailable, disclose every skipped Testcontainers test and do not claim real MySQL migration execution.
 
 - [ ] **Step 3: Inspect the packaged JAR for removed database libraries**
 
