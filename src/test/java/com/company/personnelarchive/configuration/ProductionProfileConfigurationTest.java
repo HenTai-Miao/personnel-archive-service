@@ -92,6 +92,46 @@ class ProductionProfileConfigurationTest {
     }
 
     @Test
+    void writesAndRotatesProductionLogsBesideTheWorkingDirectory() throws IOException {
+        String[] files = {
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml"
+        };
+
+        assertThat(optionalProperty("logging.file.name", Map.of(), files))
+            .contains("./log/personnel-archive-service.log");
+        assertThat(optionalProperty("logging.pattern.correlation", Map.of(), files))
+            .hasValueSatisfying(value -> assertThat(value).contains("requestId"));
+        assertThat(optionalProperty("logging.logback.rollingpolicy.file-name-pattern", Map.of(), files))
+            .contains("./log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz");
+        assertThat(optionalProperty("logging.logback.rollingpolicy.max-file-size", Map.of(), files))
+            .contains("20MB");
+        assertThat(optionalProperty("logging.logback.rollingpolicy.max-history", Map.of(), files))
+            .contains("30");
+        assertThat(optionalProperty("logging.logback.rollingpolicy.total-size-cap", Map.of(), files))
+            .contains("1GB");
+        assertThat(optionalProperty("logging.logback.rollingpolicy.clean-history-on-start", Map.of(), files))
+            .contains("false");
+    }
+
+    @Test
+    void allowsOperationsToOverrideProductionLogDestinations() throws IOException {
+        Map<String, String> overrides = Map.of(
+            "PA_LOG_FILE", "/opt/personnel-archive-service/log/personnel-archive-service.log",
+            "PA_LOG_ARCHIVE_PATTERN",
+            "/opt/personnel-archive-service/log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz");
+
+        assertThat(optionalProperty("logging.file.name", overrides,
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml"))
+            .contains("/opt/personnel-archive-service/log/personnel-archive-service.log");
+        assertThat(optionalProperty("logging.logback.rollingpolicy.file-name-pattern", overrides,
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml"))
+            .contains("/opt/personnel-archive-service/log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz");
+    }
+
+    @Test
     void doesNotUseAnExternalConfigDirectory() {
         assertThat(Files.exists(Path.of("config"))).isFalse();
     }

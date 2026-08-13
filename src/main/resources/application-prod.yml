@@ -12,3 +12,16 @@ spring:
     password: ${PA_DB_PASSWORD:}
   flyway:
     locations: classpath:db/migration
+
+logging:
+  file:
+    name: ${PA_LOG_FILE:./log/personnel-archive-service.log}
+  pattern:
+    correlation: "[requestId=%X{requestId:-system}] "
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${PA_LOG_ARCHIVE_PATTERN:./log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz}
+      max-file-size: ${PA_LOG_MAX_FILE_SIZE:20MB}
+      max-history: ${PA_LOG_MAX_HISTORY:30}
+      total-size-cap: ${PA_LOG_TOTAL_SIZE_CAP:1GB}
+      clean-history-on-start: false
