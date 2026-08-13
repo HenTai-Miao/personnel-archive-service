@@ -53,7 +53,7 @@ macOS 本机联调可在仓库根目录双击 `启动本地测试.command`，它
 Flyway V1/V14 和生产 Excel 模板，并为目录内每个白名单文件生成 `SHA256SUMS`；它
 不会重新执行 Maven。制作器会从临时生产 JAR 副本中移除内嵌的
 `application-dev.yml`，原始 Maven JAR 和本地联调配置保持不变；最终包不会携带
-开发配置、生产秘密、人员数据或本机附件。
+开发配置、生产秘密、人员数据、本机附件或 macOS `._` AppleDouble 元数据。
 
 目标统信 UOS 电脑须预装 Java 21、MySQL 8 和基本系统命令。先按包内
 `docs/02-数据库授权.txt` 在目标机轮换 `personnel_archive@127.0.0.1` 密码并授权，

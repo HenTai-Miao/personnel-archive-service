@@ -242,7 +242,7 @@ main() {
             shasum -a 256 --check SHA256SUMS >/dev/null
         fi
     )
-    tar -C "$STAGING_ROOT" -czf "$staging_archive" "$selected_name"
+    COPYFILE_DISABLE=1 tar -C "$STAGING_ROOT" -czf "$staging_archive" "$selected_name"
     tar -tzf "$staging_archive" >/dev/null
     archive_digest="$(checksum_value "$staging_archive")"
     printf '%s  %s\n' "$archive_digest" "${selected_name}.tar.gz" > "$staging_archive_checksum"

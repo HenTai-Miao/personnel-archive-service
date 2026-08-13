@@ -1,9 +1,13 @@
 package com.company.personnelarchive.configuration;
 
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -193,7 +197,7 @@ class UosDeploymentContractTest {
         assertThat(text)
             .contains("mktemp -d", "STAGING_PREFIX", "personnel-archive-service.jar", "SHA256SUMS",
                 "BUILD-INFO.txt", ".tar.gz.sha256", "tar -tzf", "for suffix in", "zip -d",
-                "BOOT-INF/classes/application-dev.yml")
+                "BOOT-INF/classes/application-dev.yml", "COPYFILE_DISABLE=1")
             .doesNotContain("cp -R deployment", "cp -a deployment", ".env",
                 "新建 文本文档 (2).txt", "mvn ", "./mvnw", "git clean", "git reset", "git checkout");
     }
@@ -225,6 +229,7 @@ class UosDeploymentContractTest {
         assertThat(directory.resolve("BUILD-INFO.txt")).isRegularFile();
         assertThat(Path.of(directory + ".tar.gz")).isRegularFile();
         assertThat(Path.of(directory + ".tar.gz.sha256")).isRegularFile();
+        assertTarHasNoAppleMetadata(Path.of(directory + ".tar.gz"));
         try (ZipFile jar = new ZipFile(directory.resolve("personnel-archive-service.jar").toFile())) {
             assertThat(jar.getEntry("BOOT-INF/classes/application-dev.yml")).isNull();
             assertThat(jar.getEntry("BOOT-INF/classes/application-prod.yml")).isNotNull();
@@ -234,6 +239,17 @@ class UosDeploymentContractTest {
             "  ./service/personnel-archive-service.service.template",
             "  ./mysql/01-轮换应用密码并授权.sql", "  ./docs/05-故障恢复.txt", "  ./BUILD-INFO.txt")
             .doesNotContain("SHA256SUMS  ./SHA256SUMS", ".env", ".git", "target/");
+    }
+
+    private static void assertTarHasNoAppleMetadata(Path archive) throws IOException {
+        try (InputStream file = Files.newInputStream(archive);
+             GzipCompressorInputStream gzip = new GzipCompressorInputStream(file);
+             TarArchiveInputStream tar = new TarArchiveInputStream(gzip)) {
+            TarArchiveEntry entry;
+            while ((entry = tar.getNextEntry()) != null) {
+                assertThat(entry.getName()).doesNotContain("/._", "__MACOSX").doesNotStartWith("._");
+            }
+        }
     }
 
     private static void writeFakeExecutableJar(Path jar) throws IOException {
