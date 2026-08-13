@@ -3,7 +3,10 @@ package com.company.personnelarchive.auth;
 import com.company.personnelarchive.audit.AuditService;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
+import com.company.personnelarchive.common.OperationalLog;
 import com.company.personnelarchive.configuration.ArchiveProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +29,7 @@ import java.util.Locale;
  * 数据库只保存刷新令牌的加 pepper 哈希，任何日志和审计都不得包含原始令牌。
  */
 public class AuthService {
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
     private final AuthMapper mapper;
     private final AccessTokenRegistry accessTokens;
     private final PasswordEncoder passwordEncoder;
@@ -48,47 +52,97 @@ public class AuthService {
 
     @Transactional
     public TokenResponse login(String username, String password) {
-        AuthMapper.UserRow user = mapper.findUser(properties.tenantId(), normalizeUsername(username));
-        if (user != null && user.lockedUntil() != null && user.lockedUntil().isAfter(clock.instant())) {
-            loginFailures.recordLocked(user);
-            throw new BusinessException(ErrorCode.ACCOUNT_LOCKED);
+        long started = OperationalLog.started();
+        log.info("event=auth_login_started userId=unknown");
+        Long userId = null;
+        try {
+            AuthMapper.UserRow user = mapper.findUser(properties.tenantId(), normalizeUsername(username));
+            if (user != null) userId = user.id();
+            if (user != null && user.lockedUntil() != null && user.lockedUntil().isAfter(clock.instant())) {
+                loginFailures.recordLocked(user);
+                throw new BusinessException(ErrorCode.ACCOUNT_LOCKED);
+            }
+            if (user == null || !user.enabled()
+                    || !passwordEncoder.matches(password == null ? "" : password, user.passwordHash())) {
+                loginFailures.record(user);
+                throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
+            }
+            mapper.recordSuccessfulLogin(user.id());
+            TokenResponse response = issuePair(principal(user));
+            audit.record(user.id(), "LOGIN", "USER", user.id(), "SUCCESS", true);
+            long completedUserId = user.id();
+            OperationalLog.afterCommit(() -> log.info(
+                "event=auth_login_completed userId={} durationMs={}", completedUserId,
+                OperationalLog.elapsedMillis(started)));
+            return response;
+        } catch (BusinessException exception) {
+            log.warn("event=auth_login_failed userId={} code={} durationMs={}", userId(userId),
+                exception.code().name(), OperationalLog.elapsedMillis(started));
+            throw exception;
         }
-        if (user == null || !user.enabled() || !passwordEncoder.matches(password == null ? "" : password, user.passwordHash())) {
-            loginFailures.record(user);
-            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
-        }
-        mapper.recordSuccessfulLogin(user.id());
-        TokenResponse response = issuePair(principal(user));
-        audit.record(user.id(), "LOGIN", "USER", user.id(), "SUCCESS", true);
-        return response;
     }
 
     @Transactional
     public TokenResponse refresh(String refreshToken) {
-        // 行锁与“先撤销旧会话、再签发新会话”共同保证刷新令牌只能成功轮换一次。
-        AuthMapper.SessionRow session = mapper.lockSession(tokenHash(refreshToken));
-        if (session == null || session.revokedAt() != null || !session.refreshExpiresAt().isAfter(clock.instant())) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        long started = OperationalLog.started();
+        log.info("event=auth_refresh_started userId=unknown");
+        Long userId = null;
+        try {
+            // 行锁与“先撤销旧会话、再签发新会话”共同保证刷新令牌只能成功轮换一次。
+            AuthMapper.SessionRow session = mapper.lockSession(tokenHash(refreshToken));
+            if (session != null) userId = session.userId();
+            if (session == null || session.revokedAt() != null
+                    || !session.refreshExpiresAt().isAfter(clock.instant())) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED);
+            }
+            AuthMapper.UserRow user = mapper.findUserById(session.userId());
+            if (user == null || !user.enabled() || user.tenantId() != session.tenantId()) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED);
+            }
+            mapper.revokeSession(session.id());
+            accessTokens.revokeSession(session.id());
+            TokenResponse response = issuePair(principal(user));
+            long completedUserId = user.id();
+            OperationalLog.afterCommit(() -> log.info(
+                "event=auth_refresh_completed userId={} durationMs={}", completedUserId,
+                OperationalLog.elapsedMillis(started)));
+            return response;
+        } catch (BusinessException exception) {
+            log.warn("event=auth_refresh_failed userId={} code={} durationMs={}", userId(userId),
+                exception.code().name(), OperationalLog.elapsedMillis(started));
+            throw exception;
         }
-        AuthMapper.UserRow user = mapper.findUserById(session.userId());
-        if (user == null || !user.enabled() || user.tenantId() != session.tenantId()) throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        mapper.revokeSession(session.id());
-        accessTokens.revokeSession(session.id());
-        return issuePair(principal(user));
     }
 
     @Transactional
     public void logout(String accessToken, String refreshToken, AuthPrincipal principal) {
-        // 同时撤销内存访问令牌和持久化刷新会话，避免只清客户端造成令牌继续可用。
-        accessTokens.revoke(accessToken);
-        if (refreshToken != null && !refreshToken.isBlank()) {
-            AuthMapper.SessionRow session = mapper.lockSession(tokenHash(refreshToken));
-            if (session != null && session.userId() == principal.userId() && session.revokedAt() == null) {
-                mapper.revokeSession(session.id());
-                accessTokens.revokeSession(session.id());
+        long started = OperationalLog.started();
+        log.info("event=auth_logout_started userId=unknown");
+        Long userId = principal == null ? null : principal.userId();
+        try {
+            // 同时撤销内存访问令牌和持久化刷新会话，避免只清客户端造成令牌继续可用。
+            accessTokens.revoke(accessToken);
+            if (refreshToken != null && !refreshToken.isBlank()) {
+                AuthMapper.SessionRow session = mapper.lockSession(tokenHash(refreshToken));
+                if (session != null && session.userId() == principal.userId() && session.revokedAt() == null) {
+                    mapper.revokeSession(session.id());
+                    accessTokens.revokeSession(session.id());
+                }
             }
+            audit.record(principal.userId(), "LOGOUT", "USER", principal.userId(), "SUCCESS", true);
+            long completedUserId = principal.userId();
+            OperationalLog.afterCommit(() -> log.info(
+                "event=auth_logout_completed userId={} durationMs={}", completedUserId,
+                OperationalLog.elapsedMillis(started)));
+        } catch (BusinessException exception) {
+            log.warn("event=auth_logout_failed userId={} code={} durationMs={}", userId(userId),
+                exception.code().name(), OperationalLog.elapsedMillis(started));
+            throw exception;
         }
-        audit.record(principal.userId(), "LOGOUT", "USER", principal.userId(), "SUCCESS", true);
+    }
+
+    private static String userId(Long value) {
+        return value == null ? "unknown" : value.toString();
     }
 
     private AuthPrincipal principal(AuthMapper.UserRow user) {
