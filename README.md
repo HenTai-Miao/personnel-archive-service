@@ -37,6 +37,34 @@ macOS 本机联调可在仓库根目录双击 `启动本地测试.command`，它
 
 生产 Excel 模板路径固定为 `classpath:/excel/personnel-archive-template-v1.xlsx`；参考空表中的失效命名范围不会被使用。
 
+## 统信 UOS 离线部署
+
+`deployment/uos/` 是同机 MySQL 生产部署的唯一离线包源。先在 Java 21 下完成
+`./mvnw verify` 并确认可执行 JAR，再使用只复制白名单文件的制作脚本：
+
+```bash
+./deployment/uos/build-bundle.sh \
+  target/personnel-archive-service-0.1.0-SNAPSHOT.jar \
+  /目标输出目录
+```
+
+制作结果包含同名目录、`.tar.gz` 和 `.tar.gz.sha256`，遇到同名产物自动追加
+`-1`、`-2`，不会覆盖旧包。制作脚本会核对 Spring Boot 启动入口、`prod` 配置、
+Flyway V1/V14 和生产 Excel 模板，并为目录内每个白名单文件生成 `SHA256SUMS`；它
+不会重新执行 Maven，也不会复制开发配置、生产秘密、人员数据或本机附件。
+
+目标统信 UOS 电脑须预装 Java 21、MySQL 8 和基本系统命令。先按包内
+`docs/02-数据库授权.txt` 在目标机轮换 `personnel_archive@127.0.0.1` 密码并授权，
+再以 root 运行 `./install.sh`。首次安装隐藏输入数据库密码，并在离线电脑本机生成
+三项安全密钥；普通重复安装保留密码、密钥和日志，`--reconfigure` 只更换数据库
+密码并保留三项密钥，`--no-start` 可跳过本次启用/启动。安装器不联网、不调用包
+管理器，也不尝试从制作电脑连接目标 MySQL。
+
+固定安装位置为 `/opt/personnel-archive-service`，受保护配置位于
+`/etc/personnel-archive-service/personnel-archive-service.env`（`root:root`、`0600`），
+systemd 服务以无登录权限的 `personnel-archive` 用户运行。安装、授权、验证、日志
+查询和恢复命令均以中文文档随包交付。
+
 ## 生产运行日志
 
 `prod` 默认同时保留控制台日志和文件日志。文件默认写入进程工作目录下的
