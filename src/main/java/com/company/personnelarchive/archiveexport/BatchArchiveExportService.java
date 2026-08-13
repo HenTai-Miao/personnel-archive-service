@@ -4,6 +4,10 @@ package com.company.personnelarchive.archiveexport;
 import com.company.personnelarchive.audit.AuditService;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
+import com.company.personnelarchive.common.OperationalLog;
+import com.company.personnelarchive.common.SafeExceptionSummary;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -23,6 +27,7 @@ import java.util.zip.ZipOutputStream;
 
 @Service
 public class BatchArchiveExportService {
+    private static final Logger log = LoggerFactory.getLogger(BatchArchiveExportService.class);
     private static final int MAX_ITEMS = 100;
     private static final long MAX_UNCOMPRESSED_BYTES = 100L * 1024 * 1024;
     private static final Pattern PERSON_ID = Pattern.compile("[1-9][0-9]{0,18}");
@@ -38,13 +43,33 @@ public class BatchArchiveExportService {
     }
 
     public GeneratedBundle generate(List<String> externalIds, long operatorId) {
-        List<Long> personIds = parseIds(externalIds);
-        byte[] bytes = buildZip(personIds);
-        // 生成或打包任一项失败时不会执行到这里，避免把未交付的档案记成成功导出。
-        personIds.forEach(personId -> audit.record(
-            operatorId, "EXPORT", "PERSON", personId, "SUCCESS", true));
-        String timestamp = FILE_TIMESTAMP.withZone(clock.getZone()).format(clock.instant());
-        return new GeneratedBundle("人员档案批量导出-" + timestamp + ".zip", bytes);
+        long started = OperationalLog.started();
+        int requestedCount = externalIds == null ? 0 : Math.min(externalIds.size(), MAX_ITEMS + 1);
+        log.info("event=batch_export_started operatorId={} itemCount={}", operatorId, requestedCount);
+        List<Long> personIds = null;
+        try {
+            personIds = parseIds(externalIds);
+            byte[] bytes = buildZip(personIds);
+            // 生成或打包任一项失败时不会执行到这里，避免把未交付的档案记成成功导出。
+            personIds.forEach(personId -> audit.record(
+                operatorId, "EXPORT", "PERSON", personId, "SUCCESS", true));
+            String timestamp = FILE_TIMESTAMP.withZone(clock.getZone()).format(clock.instant());
+            GeneratedBundle result = new GeneratedBundle("人员档案批量导出-" + timestamp + ".zip", bytes);
+            log.info("event=batch_export_completed operatorId={} itemCount={} byteCount={} result=SUCCESS durationMs={}",
+                operatorId, personIds.size(), bytes.length, OperationalLog.elapsedMillis(started));
+            return result;
+        } catch (BusinessException exception) {
+            int itemCount = personIds == null ? requestedCount : personIds.size();
+            log.warn("event=batch_export_failed operatorId={} itemCount={} code={} durationMs={}",
+                operatorId, itemCount, exception.code().name(), OperationalLog.elapsedMillis(started));
+            throw exception;
+        } catch (RuntimeException exception) {
+            int itemCount = personIds == null ? requestedCount : personIds.size();
+            log.error("event=batch_export_failed operatorId={} itemCount={} code={} durationMs={} {}",
+                operatorId, itemCount, ErrorCode.INTERNAL_ERROR.name(), OperationalLog.elapsedMillis(started),
+                SafeExceptionSummary.describe(exception));
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "批量生成档案压缩包失败");
+        }
     }
 
     private byte[] buildZip(List<Long> personIds) {

@@ -5,6 +5,8 @@ import com.company.personnelarchive.archiveimport.ExcelTemplateV1;
 import com.company.personnelarchive.audit.AuditService;
 import com.company.personnelarchive.common.BusinessException;
 import com.company.personnelarchive.common.ErrorCode;
+import com.company.personnelarchive.common.OperationalLog;
+import com.company.personnelarchive.common.SafeExceptionSummary;
 import com.company.personnelarchive.configuration.ArchiveProperties;
 import com.company.personnelarchive.person.IdentityProtection;
 import com.company.personnelarchive.person.PersonReadMapper;
@@ -20,6 +22,8 @@ import org.apache.poi.xssf.usermodel.XSSFCell;
 import org.apache.poi.xssf.usermodel.XSSFPicture;
 import org.apache.poi.xssf.usermodel.XSSFRow;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
@@ -35,6 +39,7 @@ import java.util.List;
  * 固定标签、样式、合并和打印布局来自只读空模板，数据库只提供用户数据和照片。
  */
 public class ArchiveExportService {
+    private static final Logger log = LoggerFactory.getLogger(ArchiveExportService.class);
     private static final int MAIN_FAMILY_HEADER_ROW = 37;
     private static final int MAIN_DECLARATION_STATEMENT_ROW = 44;
     private static final int MAIN_DECLARATION_VALUE_ROW = 45;
@@ -55,8 +60,12 @@ public class ArchiveExportService {
     }
 
     public GeneratedArchive generate(long personId, long operatorId) {
-        GeneratedArchive archive = generateForBatch(personId);
+        long started = OperationalLog.started();
+        log.info("event=archive_export_started operatorId={} personId={}", operatorId, personId);
+        GeneratedArchive archive = generateForBatch(personId, operatorId);
         audit.record(operatorId, "EXPORT", "PERSON", personId, "SUCCESS", true);
+        log.info("event=archive_export_completed operatorId={} personId={} byteCount={} result=SUCCESS durationMs={}",
+            operatorId, personId, archive.bytes().length, OperationalLog.elapsedMillis(started));
         return archive;
     }
 
@@ -64,22 +73,36 @@ public class ArchiveExportService {
      * 为批量打包生成一份未记成功审计的工作簿；调用方只在整包构建成功后统一落审计。
      */
     GeneratedArchive generateForBatch(long personId) {
-        // 普通导出只允许有效快照；历史版本需要单独的审计/管理入口。
-        PersonReadMapper.PersonRow person = mapper.findActive(properties.tenantId(), personId);
-        if (person == null) throw new BusinessException(ErrorCode.NOT_FOUND);
-        Resource template = resourceLoader.getResource(properties.excel().template());
-        if (!template.exists()) throw new BusinessException(ErrorCode.TEMPLATE_NOT_CONFIGURED);
-        try (var input = template.getInputStream(); var workbook = new XSSFWorkbook(input);
-             var output = new ByteArrayOutputStream()) {
+        return generateForBatch(personId, null);
+    }
+
+    private GeneratedArchive generateForBatch(long personId, Long operatorId) {
+        long started = OperationalLog.started();
+        try {
+            // 普通导出只允许有效快照；历史版本需要单独的审计/管理入口。
+            PersonReadMapper.PersonRow person = mapper.findActive(properties.tenantId(), personId);
+            if (person == null) throw new BusinessException(ErrorCode.NOT_FOUND);
+            Resource template = resourceLoader.getResource(properties.excel().template());
+            if (!template.exists()) throw new BusinessException(ErrorCode.TEMPLATE_NOT_CONFIGURED);
+            try (var input = template.getInputStream(); var workbook = new XSSFWorkbook(input);
+                 var output = new ByteArrayOutputStream()) {
             // 生成前复核模板，避免资源被替换后产出字段错位但看似成功的档案。
-            templateValidator.validateStructure(workbook);
-            validatePrintLayout(workbook.getSheet(ExcelTemplateV1.MAIN_SHEET));
-            fill(workbook, personId, person);
-            workbook.write(output);
-            return new GeneratedArchive("人员档案-" + safeFilename(person.personName()) + ".xlsx", output.toByteArray());
+                templateValidator.validateStructure(workbook);
+                validatePrintLayout(workbook.getSheet(ExcelTemplateV1.MAIN_SHEET));
+                fill(workbook, personId, person);
+                workbook.write(output);
+                return new GeneratedArchive("人员档案-" + safeFilename(person.personName()) + ".xlsx",
+                    output.toByteArray());
+            }
         } catch (BusinessException exception) {
+            log.warn("event=archive_export_failed operatorId={} personId={} code={} durationMs={}",
+                operatorId == null ? "batch" : operatorId, personId, exception.code().name(),
+                OperationalLog.elapsedMillis(started));
             throw exception;
         } catch (IOException | RuntimeException exception) {
+            log.error("event=archive_export_failed operatorId={} personId={} code={} durationMs={} {}",
+                operatorId == null ? "batch" : operatorId, personId, ErrorCode.INTERNAL_ERROR.name(),
+                OperationalLog.elapsedMillis(started), SafeExceptionSummary.describe(exception));
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "生成 Excel 档案失败");
         }
     }
