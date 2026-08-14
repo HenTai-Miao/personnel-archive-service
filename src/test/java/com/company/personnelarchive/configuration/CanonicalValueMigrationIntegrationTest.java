@@ -77,7 +77,7 @@ class CanonicalValueMigrationIntegrationTest {
             VALUES (1,?,'朋友','历史模糊值','历史模糊值','三十多岁','历史模糊值',1)
             """, deletedId);
 
-        flyway(null).migrate();
+        flyway("13").migrate();
 
         assertThat(jdbc.queryForMap("""
             SELECT birth_date,birth_date_year,birth_date_month,birth_date_day,
@@ -153,8 +153,8 @@ class CanonicalValueMigrationIntegrationTest {
         insertOpenEndedEducation(deletedId, "2010-09至今\t历史学历");
         insertOpenEndedWork(deletedId, "2018-06至今\t历史单位");
 
-        Flyway latest = flyway(null);
-        latest.migrate();
+        Flyway v14 = flyway("14");
+        v14.migrate();
 
         assertThat(jdbc.queryForMap("""
             SELECT start_date,end_date,start_date_year,start_date_month,start_date_day,
@@ -191,7 +191,7 @@ class CanonicalValueMigrationIntegrationTest {
         assertThat(jdbc.queryForObject(
             "SELECT raw_text FROM pa_work_experience WHERE person_id=?",
             String.class, deletedId)).isEqualTo("2018-06至今\t历史单位");
-        assertThat(latest.info().current().getVersion().toString()).isEqualTo("14");
+        assertThat(v14.info().current().getVersion().toString()).isEqualTo("14");
     }
 
     @Test
@@ -206,7 +206,7 @@ class CanonicalValueMigrationIntegrationTest {
             VALUES (1,?,'朋友','模糊年龄','模糊年龄','三十多岁','模糊年龄',1)
             """, personId);
 
-        assertThatThrownBy(() -> flyway(null).migrate())
+        assertThatThrownBy(() -> flyway("13").migrate())
             .isInstanceOf(FlywayException.class)
             .hasRootCauseMessage("pa_family_member id=1 field=age_text cannot be canonicalized");
 

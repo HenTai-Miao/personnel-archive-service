@@ -49,15 +49,17 @@ class MySqlMigrationIntegrationTest {
         Integer tableCount = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='personnel_archive' AND table_name NOT LIKE 'flyway%'", Integer.class);
         assertThat(tableCount).isEqualTo(15);
         var defaultAdmin = jdbc.queryForMap("""
-            SELECT username,normalized_username,password_hash,display_name,
+            SELECT id,username,normalized_username,password_hash,display_name,
                    failed_login_count,locked_until
             FROM sys_user
             WHERE tenant_id=1 AND normalized_username='hr_6298bc833379'
             """);
+        long initialDefaultAdminId = ((Number) defaultAdmin.get("id")).longValue();
         assertThat(defaultAdmin)
+            .containsEntry("id", initialDefaultAdminId)
             .containsEntry("username", "hr_6298bc833379")
             .containsEntry("normalized_username", "hr_6298bc833379")
-            .containsEntry("password_hash", DefaultAdminMigrationContractTest.DEFAULT_PASSWORD_HASH)
+            .containsEntry("password_hash", DefaultAdminMigrationContractTest.INITIAL_PASSWORD_HASH)
             .containsEntry("display_name", "人资部门")
             .containsEntry("failed_login_count", 0)
             .containsEntry("locked_until", null);
@@ -293,6 +295,33 @@ class MySqlMigrationIntegrationTest {
             .migrate();
 
         assertThat(jdbc.queryForMap("""
+            SELECT id,username,normalized_username,password_hash,display_name,
+                   is_enabled + 0 AS enabled_flag,failed_login_count,locked_until
+            FROM sys_user
+            WHERE tenant_id=1 AND normalized_username='hr_dept'
+            """))
+            .containsEntry("id", initialDefaultAdminId)
+            .containsEntry("username", "hr_dept")
+            .containsEntry("normalized_username", "hr_dept")
+            .containsEntry("password_hash", DefaultAdminMigrationContractTest.ROTATED_PASSWORD_HASH)
+            .containsEntry("display_name", "人资部门")
+            .containsEntry("enabled_flag", 1L)
+            .containsEntry("failed_login_count", 0)
+            .containsEntry("locked_until", null);
+        assertThat(jdbc.queryForObject("""
+            SELECT COUNT(*) FROM sys_user
+            WHERE tenant_id=1 AND normalized_username='hr_6298bc833379'
+            """, Integer.class)).isZero();
+        assertThat(jdbc.queryForList("""
+            SELECT role.role_code
+            FROM sys_user_role user_role
+            JOIN sys_role role
+              ON role.id=user_role.role_id AND role.tenant_id=user_role.tenant_id
+            WHERE user_role.tenant_id=1 AND user_role.user_id=?
+            ORDER BY role.role_code
+            """, String.class, initialDefaultAdminId)).containsExactly("ADMIN");
+
+        assertThat(jdbc.queryForMap("""
             SELECT birth_date,birth_date_year,birth_date_month,birth_date_day,
                    political_join_date,political_join_date_year,political_join_date_month,
                    political_join_date_day,declaration_date,declaration_date_year,
@@ -371,7 +400,7 @@ class MySqlMigrationIntegrationTest {
             """, String.class)).isEqualTo("longtext");
         assertThat(jdbc.queryForObject(
             "SELECT MAX(CAST(version AS UNSIGNED)) FROM flyway_schema_history WHERE success=1",
-            Integer.class)).isEqualTo(14);
+            Integer.class)).isEqualTo(15);
 
         assertThatThrownBy(() -> jdbc.update("""
             UPDATE pa_person
