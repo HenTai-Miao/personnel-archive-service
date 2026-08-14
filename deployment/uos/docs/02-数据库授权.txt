@@ -1,7 +1,7 @@
 人员档案数据服务——MySQL 应用账号授权
 ======================================
 
-项目首次启动需要 Flyway 在 personnel_archive 库执行 V1—V14，日常业务也要读写该库。
+项目首次启动需要 Flyway 在 personnel_archive 库执行 V1—V15，日常业务也要读写该库。
 若应用账号没有库级权限，服务会在数据库连接或 Flyway 阶段失败。
 
 一、在目标电脑本地进入 MySQL
@@ -20,7 +20,7 @@ SHOW GRANTS 必须确认 personnel_archive@127.0.0.1 对 `personnel_archive`.* �
 账号主机必须是 127.0.0.1，不应改为可从任意地址连接的通配主机。GRANT 立即生效，
 无需再执行 FLUSH PRIVILEGES。
 
-同一个应用数据源同时负责 Flyway V1—V14 和业务读写，因此该库内需要建表、改表、
+同一个应用数据源同时负责 Flyway V1—V15 和业务读写，因此该库内需要建表、改表、
 索引、查询和写入权限；不要给应用账号 MySQL 全局权限，也不要让服务使用 root。
 
 三、固定密码注意事项
@@ -37,4 +37,4 @@ Java 21 完整测试并重新制作 JAR/离线包。仅重复运行 install.sh �
 1. 在目标 MySQL 执行随包授权 SQL并核对 SHOW GRANTS。
 2. 执行 sudo ./install.sh。
 3. 确认服务 active、18080 已监听。
-4. 按 03 文档确认 flyway_schema_history 最终 version 为 14 且 success 为 1。
+4. 按 03 文档确认 flyway_schema_history 最终 version 为 15 且 success 为 1。

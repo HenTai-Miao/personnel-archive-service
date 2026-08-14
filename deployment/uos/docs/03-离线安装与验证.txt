@@ -68,7 +68,7 @@ SHOW GRANTS 核对。
 127.0.0.1:3306/personnel_archive、数据库连接、Flyway 和服务就绪检查点。安全密钥只
 记录“已配置/未配置”，不能出现值；日志也不能出现数据库密码。
 
-五、Flyway V1—V14 验证
+五、Flyway V1—V15 验证
 
 以数据库管理员身份交互登录：
 
@@ -82,10 +82,11 @@ SHOW GRANTS 核对。
      ORDER BY installed_rank;
     SELECT version, success
       FROM flyway_schema_history
-     WHERE version = '14';
+     WHERE version = '15';
 
-最终必须存在 version 14 且 success 为 1。首次空库由服务自动完成 V1—V14；不要手工
-创建业务表、修改 flyway_schema_history 或复制其他数据库的表冒充迁移结果。
+最终必须存在 version 15 且 success 为 1。首次空库由服务自动完成 V1—V15；不要手工
+创建业务表、修改 flyway_schema_history 或复制其他数据库的表冒充迁移结果。V15 会在
+不显示任何凭据值的前提下轮换固定管理员凭据并撤销其旧会话。
 
 六、客户端连接
 

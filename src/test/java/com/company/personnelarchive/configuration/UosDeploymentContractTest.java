@@ -204,15 +204,32 @@ class UosDeploymentContractTest {
         assertThat(text)
             .contains("mktemp -d", "STAGING_PREFIX", "personnel-archive-service.jar", "SHA256SUMS",
                 "start-prod.sh", "BUILD-INFO.txt", ".tar.gz.sha256", "tar -tzf", "for suffix in", "zip -d",
-                "BOOT-INF/classes/application-dev.yml", "COPYFILE_DISABLE=1")
+                "BOOT-INF/classes/application-dev.yml", "COPYFILE_DISABLE=1",
+                "BOOT-INF/classes/db/migration/V15__rotate_default_admin_credentials.sql",
+                "FlywayMigrations=V1-V15")
             .doesNotContain("cp -R deployment", "cp -a deployment", ".env",
                 "新建 文本文档 (2).txt", "mvn ", "./mvnw", "git clean", "git reset", "git checkout");
     }
 
     @Test
+    void builderRejectsAJarWithoutV15(@TempDir Path temporary) throws Exception {
+        Path jar = temporary.resolve("missing-v15.jar");
+        writeFakeExecutableJar(jar, false);
+
+        CommandResult result = run(
+            List.of(BUILDER.toString(), jar.toString(), temporary.toString(), "20260814"), Map.of());
+
+        assertThat(result.exitCode()).as(result.output()).isNotZero();
+        try (var files = Files.list(temporary)) {
+            assertThat(files.noneMatch(path -> path.getFileName().toString()
+                .startsWith("人员档案数据服务-统信UOS离线部署"))).isTrue();
+        }
+    }
+
+    @Test
     void builderCreatesVerifiedArtifactsWithoutOverwriting(@TempDir Path temporary) throws Exception {
         Path jar = temporary.resolve("verified.jar");
-        writeFakeExecutableJar(jar);
+        writeFakeExecutableJar(jar, true);
 
         CommandResult first = run(List.of(BUILDER.toString(), jar.toString(), temporary.toString(), "20260813"),
             Map.of());
@@ -241,7 +258,11 @@ class UosDeploymentContractTest {
         try (ZipFile jar = new ZipFile(directory.resolve("personnel-archive-service.jar").toFile())) {
             assertThat(jar.getEntry("BOOT-INF/classes/application-dev.yml")).isNull();
             assertThat(jar.getEntry("BOOT-INF/classes/application-prod.yml")).isNotNull();
+            assertThat(jar.getEntry(
+                "BOOT-INF/classes/db/migration/V15__rotate_default_admin_credentials.sql")).isNotNull();
         }
+        assertThat(Files.readString(directory.resolve("BUILD-INFO.txt"), StandardCharsets.UTF_8))
+            .contains("FlywayMigrations=V1-V15");
         String tree = Files.readString(directory.resolve("SHA256SUMS"), StandardCharsets.UTF_8);
         assertThat(tree).contains("  ./personnel-archive-service.jar", "  ./install.sh", "  ./start-prod.sh",
             "  ./service/personnel-archive-service.service.template",
@@ -260,21 +281,25 @@ class UosDeploymentContractTest {
         }
     }
 
-    private static void writeFakeExecutableJar(Path jar) throws IOException {
+    private static void writeFakeExecutableJar(Path jar, boolean includeV15) throws IOException {
         Manifest manifest = new Manifest();
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS,
             "org.springframework.boot.loader.launch.JarLauncher");
         manifest.getMainAttributes().putValue("Start-Class",
             "com.company.personnelarchive.PersonnelArchiveApplication");
-        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
-            for (String entry : List.of(
+        List<String> entries = new ArrayList<>(List.of(
                 "org/springframework/boot/loader/launch/JarLauncher.class",
                 "BOOT-INF/classes/application-prod.yml",
                 "BOOT-INF/classes/application-dev.yml",
                 "BOOT-INF/classes/db/migration/V1__initial_schema.sql",
                 "BOOT-INF/classes/db/migration/V14__canonicalize_open_ended_range_text.class",
-                "BOOT-INF/classes/excel/personnel-archive-template-v1.xlsx")) {
+                "BOOT-INF/classes/excel/personnel-archive-template-v1.xlsx"));
+        if (includeV15) {
+            entries.add("BOOT-INF/classes/db/migration/V15__rotate_default_admin_credentials.sql");
+        }
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            for (String entry : entries) {
                 output.putNextEntry(new JarEntry(entry));
                 output.write(("fixture:" + entry).getBytes(StandardCharsets.UTF_8));
                 output.closeEntry();

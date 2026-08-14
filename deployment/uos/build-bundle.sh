@@ -67,6 +67,7 @@ validate_executable_jar() {
         "BOOT-INF/classes/application-prod.yml" \
         "BOOT-INF/classes/db/migration/V1__initial_schema.sql" \
         "BOOT-INF/classes/db/migration/V14__canonicalize_open_ended_range_text.class" \
+        "BOOT-INF/classes/db/migration/V15__rotate_default_admin_credentials.sql" \
         "BOOT-INF/classes/excel/personnel-archive-template-v1.xlsx"; do
         if ! grep -Fxq "$required_entry" <<< "$entries"; then
             fail "JAR 缺少必需内容，拒绝制作离线包。"
@@ -129,7 +130,7 @@ write_build_info() {
         printf 'ApplicationVersion=0.1.0-SNAPSHOT\n'
         printf 'RequiredJava=21\n'
         printf 'ProductionDatabase=MySQL 8 on 127.0.0.1:3306/personnel_archive\n'
-        printf 'FlywayMigrations=V1-V14\n'
+        printf 'FlywayMigrations=V1-V15\n'
         printf 'BundleDate=%s\n' "$BUNDLE_DATE"
         printf 'SourceCommit=%s\n' "$commit"
         printf 'JarSHA256=%s\n' "$jar_digest"
