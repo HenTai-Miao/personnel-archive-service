@@ -179,7 +179,7 @@ class UosDeploymentContractTest {
         String documents = readAll(DOCS);
         assertThat(documents)
             .contains("mysql -u root -p", "安装前", "不要粘贴到聊天", "不要保存到普通文本文件",
-                "127.0.0.1", "flyway_schema_history", "version", "14",
+                "127.0.0.1", "flyway_schema_history", "V1—V15", "version 15",
                 "/data/personnel-archive-service", "每天一份", "log.YYYY-MM-DD.log", "不压缩",
                 "不会自动删除", "启动prod环境.sh", "只需要", "固定在 prod")
             .doesNotContain("/opt/personnel-archive-service", "--reconfigure", "20MB", "20 MB",

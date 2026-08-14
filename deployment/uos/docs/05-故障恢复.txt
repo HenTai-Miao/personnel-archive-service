@@ -34,7 +34,7 @@
 
 根据 flyway 阶段、异常类型和安全化调用位置确认原因，常见原因是权限不足、数据库不
 是预期结构、旧表被人工修改或 MySQL 版本不兼容。修复真实原因后重启，Flyway 会依据
-flyway_schema_history 继续。不要删除、伪造或手工改写迁移记录；最终 version 14 的
+flyway_schema_history 继续。不要删除、伪造或手工改写迁移记录；最终 version 15 的
 success 必须为 1。
 
 四、JAR 更新后恢复

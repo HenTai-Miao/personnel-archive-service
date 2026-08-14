@@ -1,6 +1,6 @@
 # 人员档案数据服务
 
-技术项目名为 `personnel-archive-service`。Java 21 / Spring Boot 4 模块化单体仅使用 MySQL，Flyway 是唯一数据库结构变更入口。`application.yml` 保存公共配置并默认启用 `dev`；`application-dev.yml` 和 `application-prod.yml` 都使用 MySQL V1–V14 迁移路径。
+技术项目名为 `personnel-archive-service`。Java 21 / Spring Boot 4 模块化单体仅使用 MySQL，Flyway 是唯一数据库结构变更入口。`application.yml` 保存公共配置并默认启用 `dev`；`application-dev.yml` 和 `application-prod.yml` 都使用 MySQL V1–V15 迁移路径。
 
 Excel 业务字段均可留空；仅对已填写的身份证执行格式与加密保护，并只在非空姓名和非空身份证同时命中同一有效档案时要求覆盖或跳过。
 
@@ -16,9 +16,9 @@ Excel 业务字段均可留空；仅对已填写的身份证执行格式与加�
 
 本地自定义 MySQL `PA_DB_URL` 必须包含 `connectionTimeZone=Asia/Shanghai`。MySQL `DATETIME` 保存中国本地时间，服务将其映射为准确的 UTC `Instant` 后再通过 API 输出；不要在客户端固定增减八小时。
 
-Flyway V8 会为默认租户创建一个启用的 `ADMIN` 登录：账号 `hr_6298bc833379`、显示名称“人资部门”。密码只以 BCrypt cost 12 哈希存在于迁移中，明文由部署负责人单独保管。
+Flyway V8 保留历史默认管理员种子，V15 再将同一用户 ID 轮换为账号 `hr_dept`、显示名称“人资部门”和唯一 `ADMIN` 角色，同时解除锁定并撤销该用户的既有会话。密码只以经过验证的 BCrypt cost 12 哈希存在于迁移中，明文由部署负责人单独保管；若历史账号和目标账号同时存在或默认用户缺失，V15 会失败而不会合并或静默新建用户。
 
-`AdminBootstrap` 兼容代码暂时保留：仅当数据库没有任何用户且显式提供管理员引导变量时才会运行；标准新库已由 V8 创建用户，因此不会触发该流程。
+`AdminBootstrap` 兼容代码暂时保留：仅当数据库没有任何用户且显式提供管理员引导变量时才会运行；标准新库会依次应用 V8 和 V15，因此不会触发该流程。
 
 ```bash
 ./mvnw verify
@@ -31,7 +31,7 @@ macOS 本机联调可在仓库根目录双击 `启动本地测试.command`，它
 
 `prod` profile 固定监听 `18080`，使用 MySQL Connector/J 和 `classpath:db/migration`。数据源固定指向同机 `127.0.0.1:3306/personnel_archive`，固定使用已经提供的应用账号和密码，并保留 `connectionTimeZone=Asia/Shanghai`。按当前生产交付约定，`PA_DB_*`、`PA_SERVER_PORT` 和 `PA_LOG_*` 均不能覆盖这些值；数据库密码不得打印到终端、日志或文档中。
 
-三项安全值也按用户明确要求固定在 `prod` 配置中，生产启动不再读取外部密钥文件。Flyway 使用同一应用数据源执行 MySQL V1–V14，不再使用独立的 Flyway URL。部署前由 DBA 创建数据库 `personnel_archive`、固定应用账号并完成库级授权；Flyway 不创建数据库本身，也不迁移其他数据库产品中的数据。若以后修改数据库密码或三项安全值，必须重新完成 Java 21 验证并制作离线包；已有数据只能继续使用原 HMAC/AES 值。
+三项安全值也按用户明确要求固定在 `prod` 配置中，生产启动不再读取外部密钥文件。Flyway 使用同一应用数据源执行 MySQL V1–V15，不再使用独立的 Flyway URL。部署前由 DBA 创建数据库 `personnel_archive`、固定应用账号并完成库级授权；Flyway 不创建数据库本身，也不迁移其他数据库产品中的数据。若以后修改数据库密码或三项安全值，必须重新完成 Java 21 验证并制作离线包；已有数据只能继续使用原 HMAC/AES 值。
 
 部署后须在目标 MySQL 验收迁移、默认管理员登录、导入、覆盖、查询、软删除和 XLSX/ZIP 导出。当前离线交付的固定数据库凭据和三项安全值都包含在 JAR 中，因此 JAR 必须作为敏感生产安装介质保管，不得提交、推送、公开上传或发送给无关人员。
 
@@ -50,7 +50,7 @@ macOS 本机联调可在仓库根目录双击 `启动本地测试.command`，它
 
 制作结果包含同名目录、`.tar.gz` 和 `.tar.gz.sha256`，遇到同名产物自动追加
 `-1`、`-2`，不会覆盖旧包。制作脚本会核对 Spring Boot 启动入口、`prod` 配置、
-Flyway V1/V14 和生产 Excel 模板，并为目录内每个白名单文件生成 `SHA256SUMS`；它
+Flyway V1/V14/V15 和生产 Excel 模板，并为目录内每个白名单文件生成 `SHA256SUMS`；它
 不会重新执行 Maven。制作器会从临时生产 JAR 副本中移除内嵌的
 `application-dev.yml`，原始 Maven JAR 和本地联调配置保持不变。按用户明确要求，最终
 JAR 内含固定 `prod` 数据库连接（包括已提供的应用密码）和三项固定安全值，因此离线包
