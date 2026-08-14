@@ -1,5 +1,5 @@
 server:
-  port: ${PA_SERVER_PORT:18080}
+  port: 18080
 
 spring:
   config:
@@ -7,21 +7,20 @@ spring:
       on-profile: prod
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: "${PA_DB_URL:jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai}"
-    username: ${PA_DB_USERNAME:personnel_archive}
-    password: ${PA_DB_PASSWORD:}
+    url: "jdbc:mysql://127.0.0.1:3306/personnel_archive?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai"
+    username: personnel_archive
+    password: "WxIzUR_eE:Sbdz3[r4B4"
   flyway:
     locations: classpath:db/migration
 
 logging:
   file:
-    name: ${PA_LOG_FILE:./log/personnel-archive-service.log}
+    name: ./log/log.%d{yyyy-MM-dd}.log
   pattern:
     correlation: "[requestId=%X{requestId:-system}] "
-  logback:
-    rollingpolicy:
-      file-name-pattern: ${PA_LOG_ARCHIVE_PATTERN:./log/personnel-archive-service.%d{yyyy-MM-dd}.%i.log.gz}
-      max-file-size: ${PA_LOG_MAX_FILE_SIZE:20MB}
-      max-history: ${PA_LOG_MAX_HISTORY:30}
-      total-size-cap: ${PA_LOG_TOTAL_SIZE_CAP:1GB}
-      clean-history-on-start: false
+
+personnel-archive:
+  security:
+    token-pepper: "/DGe/g8gctg2OlF5qIDNJENO69RfYlywRcnbcyZT0gHygEP6gMT3gpbYpw0gCEEB"
+    identity-hmac-key: "16nYo7igoQDsGX5ikM6gpiHPxxtBbT+2s/ps/foT6rM7I44cQuMw0vgJqOGi4vhD"
+    identity-encryption-key: "V02OJ1Xz5tyAQEk+EtuoVC1evvtqp1I2xrFx2qu8sBY="
